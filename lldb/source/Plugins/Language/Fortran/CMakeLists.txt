@@ -10,4 +10,5 @@ add_lldb_library(lldbPluginFortranLanguage PLUGIN
     lldbSymbol
     lldbTarget
     lldbUtility
+    lldbPluginTypeSystemFortran
 )
