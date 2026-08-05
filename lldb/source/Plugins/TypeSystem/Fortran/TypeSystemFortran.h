@@ -58,6 +58,10 @@ public:
                                uint64_t total_array_size,
                                uint64_t total_elements);
 
+  void RegisterSyntheticArrayType(lldb::user_id_t valobj_id,
+                                  lldb::opaque_compiler_type_t type,
+                                  CompilerType array_type);
+
   static LanguageSet GetSupportedLanguagesForTypes();
 
   static LanguageSet GetSupportedLanguagesForExpressions();
@@ -244,6 +248,9 @@ public:
   }
 
   int64_t GetArrayLowerBound(lldb::opaque_compiler_type_t type) override;
+
+  CompilerType GetExplicitArrayType(lldb::opaque_compiler_type_t type,
+                                    lldb::user_id_t valobj_id) override;
   //
   CompilerType GetCanonicalType(lldb::opaque_compiler_type_t type) override {
     if (!type)
@@ -494,6 +501,23 @@ private:
   // of the types
   mutable llvm::SmallVector<std::unique_ptr<plugin::fortran::FortranType>>
       m_types;
+  // Flang emits a single generic CompilerType for dynamic array types that
+  // share the same rank, even though their runtime descriptors (bounds/strides)
+  // vary per instance.
+  //
+  // To handle this, we construct explicit concrete types per ValueObject via
+  // the synthetic children provider. However, querying the synthetic provider
+  // directly for array bounds is unreliable (e.g., during expression evaluation
+  // in DILEval, or when child caches are invalidated).
+  //
+  // Since all CompilerTypes are owned by this TypeSystem, we can map a
+  // ValueObject (or its address) to its specific materialized FortranType. This
+  // lets us query runtime array bounds and dimensions deterministically without
+  // relying on the synthetic child frontend, or extending its API to suit our
+  // needs.
+  using SyntheticArrayKey =
+      std::pair<lldb::user_id_t, lldb::opaque_compiler_type_t>;
+  llvm::DenseMap<SyntheticArrayKey, CompilerType> m_synthetic_array_types;
   std::unique_ptr<plugin::dwarf::DWARFASTParser> m_dwarf_ast_parser_up;
   /// Store byte order of the system so variables can be printed correctly
   lldb::ByteOrder m_byte_order;

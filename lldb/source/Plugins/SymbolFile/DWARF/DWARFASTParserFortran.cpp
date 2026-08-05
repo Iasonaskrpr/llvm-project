@@ -139,6 +139,7 @@ FortranArrayMetadata ParseArray(const DWARFDIE &parent_die,
         break;
 
       case DW_AT_upper_bound:
+        array_info.is_star = false;
         if (DWARFFormValue::IsBlockForm(form_value.Form())) {
           array_info.is_dynamic = true;
           upper_bound = GetDWARFExpression(die, form_value, module);
@@ -257,7 +258,7 @@ lldb::TypeSP DWARFASTParserFortran::ParseTypeFromDWARF(const SymbolContext &sc,
             array_info.element_type = array_element_type;
             // We need to calculate the total array size, if it is known
             // at compile time
-            if (!array_info.is_dynamic) {
+            if (!array_info.is_dynamic && !array_info.is_star) {
               for (size_t idx = 0; idx < array_info.dimensions.size(); idx++) {
                 total_elements *= std::get<uint64_t>(
                     array_info.dimensions[idx].element_count);

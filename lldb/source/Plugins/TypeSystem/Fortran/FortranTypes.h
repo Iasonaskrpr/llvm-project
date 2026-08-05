@@ -245,15 +245,16 @@ public:
   FortranArray(CompilerType element_type,
                const llvm::SmallVectorImpl<ArrayShape> &dimensions,
                ConstString array_type_name, uint64_t total_array_size,
-               bool is_allocatable, bool is_dynamic, uint64_t total_elements,
-               DWARFExpressionList allocated_exp,
+               bool is_allocatable, bool is_dynamic, bool is_star,
+               uint64_t total_elements, DWARFExpressionList allocated_exp,
                DWARFExpressionList data_location_exp)
       : FortranType(TypeKind::KIND_ARRAY, total_array_size, array_type_name),
         m_element_type(element_type),
         m_dimensions(dimensions.begin(), dimensions.end()),
         m_is_allocatable(is_allocatable), m_is_dynamic(is_dynamic),
-        m_total_elements(total_elements), m_allocated_exp(allocated_exp),
-        m_data_location_exp(data_location_exp) {}
+        m_is_star(is_star), m_total_elements(total_elements),
+        m_allocated_exp(allocated_exp), m_data_location_exp(data_location_exp) {
+  }
   CompilerType GetElementType() const { return m_element_type; }
   uint64_t GetTotalElements() const { return m_total_elements; }
   bool IsAllocatable() const { return m_is_allocatable; }
@@ -269,6 +270,7 @@ public:
 
   size_t GetRank() const { return m_dimensions.size(); }
   llvm::ArrayRef<ArrayShape> GetDimensions() const { return m_dimensions; }
+  bool IsStar() const { return m_is_star; }
 
   DWARFExpressionList GetAllocatedExpression() const { return m_allocated_exp; }
   DWARFExpressionList GetDataLocationExpression() const {
@@ -300,8 +302,9 @@ private:
   llvm::SmallVector<ArrayShape, 2> m_dimensions;
   bool m_is_allocatable;
   // To know if the array is fully explicit without looping through the shapes
-  // every time
+  // every time.
   bool m_is_dynamic;
+  bool m_is_star;
   uint64_t m_total_elements;
   DWARFExpressionList m_allocated_exp;
   DWARFExpressionList m_data_location_exp;
@@ -346,7 +349,9 @@ inline ConstString CreateArrayTypeName(const CompilerType &element_type,
 
     if (ub.IsStar()) {
       // Assuming you want standard Fortran syntax (e.g., "1:*")
-      name_stream << lb.GetBound() << ":*";
+      if (lb.IsExplicit())
+        name_stream << lb.GetBound() << ":";
+      name_stream << "*";
     } else if (ub.IsColon()) {
       // Unknown bound elements
       name_stream << ":";

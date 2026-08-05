@@ -322,6 +322,8 @@ public:
 
   int64_t GetArrayLowerBound() const;
 
+  CompilerType GetExplicitArrayType(lldb::user_id_t id) const;
+
   CompilerType GetCanonicalType() const;
 
   CompilerType GetFullyUnqualifiedType() const;

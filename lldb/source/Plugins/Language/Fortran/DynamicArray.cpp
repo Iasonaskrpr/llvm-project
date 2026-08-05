@@ -109,17 +109,20 @@ lldb::ChildCacheState DynamicArraySyntheticFrontEnd::Update() {
   DWARFExpressionList allocated_exp = array_type->GetAllocatedExpression();
   DWARFExpressionList data_location_exp =
       array_type->GetDataLocationExpression();
+  // Some arrays may need to be evaluated at runtime but are always allocated.
+  if (allocated_exp.IsValid()) {
+    llvm::Expected<Value> allocated_val_or_err =
+        allocated_exp.Evaluate(&exe_ctx, nullptr, loclist_base_load_addr,
+                               nullptr, &object_address_val);
+    if (!allocated_val_or_err) {
+      llvm::consumeError(allocated_val_or_err.takeError());
+      return lldb::ChildCacheState::eRefetch;
+    }
 
-  llvm::Expected<Value> allocated_val_or_err = allocated_exp.Evaluate(
-      &exe_ctx, nullptr, loclist_base_load_addr, nullptr, &object_address_val);
-  if (!allocated_val_or_err) {
-    llvm::consumeError(allocated_val_or_err.takeError());
-    return lldb::ChildCacheState::eRefetch;
+    Value allocated_val = *allocated_val_or_err;
+    if (allocated_val.ResolveValue(&exe_ctx).IsZero())
+      return lldb::ChildCacheState::eRefetch;
   }
-
-  Value allocated_val = *allocated_val_or_err;
-  if (allocated_val.ResolveValue(&exe_ctx).IsZero())
-    return lldb::ChildCacheState::eRefetch;
 
   m_allocated = true;
 
@@ -254,6 +257,9 @@ lldb::ChildCacheState DynamicArraySyntheticFrontEnd::Update() {
 
   m_array_type =
       ast_sp->CreateArrayType(array_info, total_array_size, total_elements);
+  ast_sp->RegisterSyntheticArrayType(
+      m_backend.GetID(), m_backend.GetCompilerType().GetOpaqueQualType(),
+      m_array_type);
   return lldb::ChildCacheState::eRefetch;
 }
 
@@ -262,10 +268,11 @@ llvm::Expected<uint32_t> DynamicArraySyntheticFrontEnd::CalculateNumChildren() {
   if (!raw_type)
     return 0;
   FortranArray *array_type = static_cast<FortranArray *>(raw_type);
-  if (!array_type)
+  if (!array_type || array_type->IsStar())
     return 0;
 
   ArrayShape first_dimension = array_type->GetDimensions().front();
+
   return first_dimension.GetNumberOfElements();
 }
 

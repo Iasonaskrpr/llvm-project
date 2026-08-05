@@ -67,17 +67,14 @@ FortranDynamicArrayFinder(ValueObject &valobj,
                           lldb::DynamicValueType use_dynamic) {
   CompilerType type = valobj.GetCompilerType();
 
-  // 1. Query if it is actually an array type according to DWARF
   if (type.IsValid() && type.IsArrayType(nullptr, nullptr, nullptr)) {
 
-    // 2. Setup the flags
     SyntheticChildren::Flags flags;
     flags.SetCascades(true)
         .SetSkipPointers(false)
         .SetSkipReferences(false)
         .SetFrontEndWantsDereference();
 
-    // 3. Bind and return your custom frontend creator
     return lldb::SyntheticChildrenSP(new CXXSyntheticChildren(
         flags, "fortran array synthetic children",
         lldb_private::formatters::FortranDynamicArraySyntheticFrontEndCreator));
@@ -87,12 +84,10 @@ FortranDynamicArrayFinder(ValueObject &valobj,
   return nullptr;
 }
 
-// Implement the Language plugin override
 HardcodedFormatters::HardcodedSyntheticFinder
 FortranLanguage::GetHardcodedSynthetics() {
   HardcodedFormatters::HardcodedSyntheticFinder formatters;
 
-  // Push our structural finder into the formatters list
   formatters.push_back([](lldb_private::ValueObject &valobj,
                           lldb::DynamicValueType use_dynamic,
                           FormatManager &fmt_mgr) -> lldb::SyntheticChildrenSP {

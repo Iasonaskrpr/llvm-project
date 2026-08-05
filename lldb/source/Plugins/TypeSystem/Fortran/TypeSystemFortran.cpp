@@ -254,9 +254,7 @@ CompilerType TypeSystemFortran::CreateArrayType(FortranArrayMetadata array_info,
             array_info.dimensions[idx].element_count)) {
       bound_category = ArrayBound::Category::Colon;
 
-      if (std::holds_alternative<std::monostate>(
-              array_info.dimensions[idx].element_count) &&
-          idx == rank - 1)
+      if (array_info.is_star && idx == rank - 1)
         bound_category = ArrayBound::Category::Star;
     }
 
@@ -328,8 +326,8 @@ CompilerType TypeSystemFortran::CreateArrayType(FortranArrayMetadata array_info,
 
   auto new_type_up = std::make_unique<FortranArray>(
       array_info.element_type, array_shapes, array_type_name, total_array_size,
-      array_info.is_allocatable, array_info.is_dynamic, total_elements,
-      array_info.allocated_exp, array_info.data_location_exp);
+      array_info.is_allocatable, array_info.is_dynamic, array_info.is_star,
+      total_elements, array_info.allocated_exp, array_info.data_location_exp);
 
   array_type = new_type_up.get();
   m_arrays.InsertNode(array_type, insert_pos);
@@ -363,14 +361,19 @@ llvm::Expected<CompilerType> TypeSystemFortran::GetChildCompilerTypeAtIndex(
 
   if (fortran_type->IsDynamic())
     return CompilerType();
+
   llvm::ArrayRef<ArrayShape> old_dimensions = fortran_type->GetDimensions();
-  int64_t lb = old_dimensions.front().GetLowerBound().GetBound();
-  uint64_t num_elements = old_dimensions.front().GetNumberOfElements();
+  ArrayShape first_dimension = old_dimensions.front();
+  int64_t lb = first_dimension.GetLowerBound().GetBound();
+  uint64_t num_elements;
   // In Fortran indices can be negative, but lldb defaults to using unsigned
   // by casting the index to a signed integer we can access elements with
   // negative indices.
-  if (idx >= num_elements)
-    return CompilerType();
+  if (!fortran_type->IsStar()) {
+    num_elements = old_dimensions.front().GetNumberOfElements();
+    if (idx >= num_elements)
+      return CompilerType();
+  }
 
   if (old_dimensions.size() > 1) {
 
@@ -420,8 +423,8 @@ llvm::Expected<CompilerType> TypeSystemFortran::GetChildCompilerTypeAtIndex(
                             is_allocatable, is_star);
     auto new_type_up = std::make_unique<FortranArray>(
         fortran_type->GetElementType(), new_dimensions, type_name,
-        child_byte_size, false, false, new_total_elements,
-        DWARFExpressionList(), DWARFExpressionList());
+        child_byte_size, false, false, fortran_type->IsStar(),
+        new_total_elements, DWARFExpressionList(), DWARFExpressionList());
     array_type = new_type_up.get();
     m_arrays.InsertNode(array_type, insert_pos);
     m_types.push_back(std::move(new_type_up));
@@ -431,6 +434,23 @@ llvm::Expected<CompilerType> TypeSystemFortran::GetChildCompilerTypeAtIndex(
     child_byte_size = fortran_type->GetElementByteSize();
     return fortran_type->GetElementType();
   }
+}
+
+void TypeSystemFortran::RegisterSyntheticArrayType(user_id_t valobj_id,
+                                                   opaque_compiler_type_t type,
+                                                   CompilerType array_type) {
+  m_synthetic_array_types.insert_or_assign({valobj_id, type}, array_type);
+}
+
+CompilerType
+TypeSystemFortran::GetExplicitArrayType(opaque_compiler_type_t type,
+                                        user_id_t valobj_id) {
+  auto possible_type = m_synthetic_array_types.find({valobj_id, type});
+
+  if (possible_type == m_synthetic_array_types.end())
+    return CompilerType();
+
+  return possible_type->getSecond();
 }
 
 int64_t TypeSystemFortran::GetArrayLowerBound(opaque_compiler_type_t type) {
@@ -652,7 +672,7 @@ TypeSystemFortran::GetNumChildren(opaque_compiler_type_t type,
 
     // Fetch the number of elements
     if (!fortran_array->IsDynamic()) {
-      if (fortran_array->GetDimensions().empty())
+      if (fortran_array->GetDimensions().empty() || fortran_array->IsStar())
         return 0;
       return fortran_array->GetDimensions().front().GetNumberOfElements();
     }
