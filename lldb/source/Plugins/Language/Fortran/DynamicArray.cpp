@@ -55,7 +55,8 @@ DynamicArraySyntheticFrontEnd::DynamicArraySyntheticFrontEnd(
   if (valobj_sp)
     Update();
 }
-// TODO: Handle star arrays
+
+// TODO: Delete the synthetic types when a new one is created.
 lldb::ChildCacheState DynamicArraySyntheticFrontEnd::Update() {
   m_allocated = false;
 
@@ -72,7 +73,7 @@ lldb::ChildCacheState DynamicArraySyntheticFrontEnd::Update() {
     return lldb::ChildCacheState::eRefetch;
   }
   m_element_type = array_type->GetElementType();
-  if (!array_type->IsDynamic()) {
+  if (!array_type->IsDynamic() && !array_type->IsAuto()) {
     m_allocated = true;
     m_array_addr = m_backend.GetValueAsUnsigned(LLDB_INVALID_ADDRESS);
 
@@ -125,18 +126,25 @@ lldb::ChildCacheState DynamicArraySyntheticFrontEnd::Update() {
   }
 
   m_allocated = true;
+  if (data_location_exp.IsValid()) {
+    llvm::Expected<Value> array_addr_or_err =
+        data_location_exp.Evaluate(&exe_ctx, nullptr, loclist_base_load_addr,
+                                   nullptr, &object_address_val);
+    if (!array_addr_or_err && array_type->IsDynamic()) {
+      llvm::consumeError(array_addr_or_err.takeError());
+      return lldb::ChildCacheState::eRefetch;
+    }
 
-  llvm::Expected<Value> array_addr_or_err = data_location_exp.Evaluate(
-      &exe_ctx, nullptr, loclist_base_load_addr, nullptr, &object_address_val);
-  if (!array_addr_or_err) {
-    llvm::consumeError(array_addr_or_err.takeError());
-    return lldb::ChildCacheState::eRefetch;
+    Value array_addr = *array_addr_or_err;
+
+    m_array_addr =
+        array_addr.ResolveValue(&exe_ctx).ULongLong(LLDB_INVALID_ADDRESS);
+  } else {
+    m_array_addr = m_backend.GetValueAsUnsigned(LLDB_INVALID_ADDRESS);
+    if (m_array_addr == LLDB_INVALID_ADDRESS) {
+      m_array_addr = m_backend.GetLoadAddress();
+    }
   }
-
-  Value array_addr = *array_addr_or_err;
-
-  m_array_addr =
-      array_addr.ResolveValue(&exe_ctx).ULongLong(LLDB_INVALID_ADDRESS);
 
   llvm::ArrayRef<ArrayShape> dimensions = array_type->GetDimensions();
   FortranArrayMetadata array_info;
@@ -151,6 +159,10 @@ lldb::ChildCacheState DynamicArraySyntheticFrontEnd::Update() {
     DWARFExpressionList element_count_exp =
         dimension.GetElementCountExpression();
     DWARFExpressionList byte_stride_exp = dimension.GetByteStrideExpression();
+    plugin::dwarf::DWARFDIE lower_bound_var = dimension.GetLowerBoundDIE();
+    plugin::dwarf::DWARFDIE upper_bound_var = dimension.GetUpperBoundDIE();
+    plugin::dwarf::DWARFDIE element_count_var = dimension.GetElementCountDIE();
+    plugin::dwarf::DWARFDIE byte_stride_var = dimension.GetByteStrideDIE();
     if (lower_bound_exp.IsValid()) {
       llvm::Expected<Value> lower_bound_or_err =
           lower_bound_exp.Evaluate(&exe_ctx, nullptr, loclist_base_load_addr,
@@ -164,6 +176,17 @@ lldb::ChildCacheState DynamicArraySyntheticFrontEnd::Update() {
 
       dimension_info.lower_bound =
           lower_bound.ResolveValue(&exe_ctx).SLongLong(0);
+    } else if (lower_bound_var.IsValid()) {
+      if (auto frame = exe_ctx.GetFrameSP()) {
+        Status error;
+        lldb::VariableSP var_sp;
+        auto valobj_sp = frame->GetValueForVariableExpressionPath(
+            lower_bound_var.GetName(), eNoDynamicValues, 0, var_sp, error);
+        if (valobj_sp) {
+          dimension_info.lower_bound = valobj_sp->GetValueAsSigned(0);
+          break;
+        }
+      }
     } else
       dimension_info.lower_bound = dimension.GetLowerBound().GetBound();
 
@@ -179,6 +202,16 @@ lldb::ChildCacheState DynamicArraySyntheticFrontEnd::Update() {
       Value element_count = *element_count_or_err;
       dimension_info.element_count =
           element_count.ResolveValue(&exe_ctx).ULongLong(0);
+    } else if (element_count_var.IsValid()) {
+      if (auto frame = exe_ctx.GetFrameSP()) {
+        Status error;
+        lldb::VariableSP var_sp;
+        auto valobj_sp = frame->GetValueForVariableExpressionPath(
+            element_count_var.GetName(), eNoDynamicValues, 0, var_sp, error);
+        if (valobj_sp) {
+          dimension_info.element_count = valobj_sp->GetValueAsUnsigned(0);
+        }
+      }
     } else
       dimension_info.element_count = dimension.GetElementCount();
 
@@ -194,6 +227,16 @@ lldb::ChildCacheState DynamicArraySyntheticFrontEnd::Update() {
       Value upper_bound = *upper_bound_or_err;
       dimension_info.upper_bound =
           upper_bound.ResolveValue(&exe_ctx).SLongLong(0);
+    } else if (upper_bound_var.IsValid()) {
+      if (auto frame = exe_ctx.GetFrameSP()) {
+        Status error;
+        lldb::VariableSP var_sp;
+        auto valobj_sp = frame->GetValueForVariableExpressionPath(
+            upper_bound_var.GetName(), eNoDynamicValues, 0, var_sp, error);
+        if (valobj_sp) {
+          dimension_info.upper_bound = valobj_sp->GetValueAsSigned(0);
+        }
+      }
     } else if (dimension.GetUpperBound().IsBoundKnown())
       dimension_info.upper_bound = dimension.GetUpperBound().GetBound();
     else
@@ -213,6 +256,16 @@ lldb::ChildCacheState DynamicArraySyntheticFrontEnd::Update() {
       Value byte_stride = *byte_stride_or_err;
       dimension_info.byte_stride =
           byte_stride.ResolveValue(&exe_ctx).ULongLong(0);
+    } else if (byte_stride_var.IsValid()) {
+      if (auto frame = exe_ctx.GetFrameSP()) {
+        Status error;
+        lldb::VariableSP var_sp;
+        auto valobj_sp = frame->GetValueForVariableExpressionPath(
+            byte_stride_var.GetName(), eNoDynamicValues, 0, var_sp, error);
+        if (valobj_sp) {
+          dimension_info.byte_stride = valobj_sp->GetValueAsUnsigned(0);
+        }
+      }
     } else
       dimension_info.byte_stride = dimension.GetByteStride();
 

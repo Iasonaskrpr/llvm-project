@@ -9,6 +9,7 @@
 #ifndef LLDB_SOURCE_PLUGINS_TYPESYSTEM_FORTRAN_FORTRANTYPES_H
 #define LLDB_SOURCE_PLUGINS_TYPESYSTEM_FORTRAN_FORTRANTYPES_H
 
+#include "Plugins/SymbolFile/DWARF/DWARFDIE.h"
 #include "lldb/Expression/DWARFExpressionList.h"
 #include "lldb/Symbol/CompilerType.h"
 #include "lldb/Utility/ConstString.h"
@@ -24,9 +25,8 @@ using DWARFValue =
     std::variant<std::monostate, // Represents "Default" or "Not Present"
                  uint64_t,       // Constant value (e.g., constant byte stride)
                  int64_t,
-                 DWARFExpressionList // Dynamic expression (e.g.,
-                                     // variable/runtime stride)
-                 >;
+                 // Dynamic expression (e.g., variable/runtime stride)
+                 DWARFExpressionList, dwarf::DWARFDIE>;
 
 struct FortranDimension {
   DWARFValue lower_bound;
@@ -41,6 +41,7 @@ struct FortranArrayMetadata {
   bool is_allocatable = false;
   bool is_dynamic = false;
   bool is_star = false;
+  bool is_auto = false;
   DWARFExpressionList allocated_exp;
   DWARFExpressionList data_location_exp;
 };
@@ -185,6 +186,13 @@ public:
     return m_byte_stride_exp;
   }
 
+  const dwarf::DWARFDIE &GetElementCountDIE() const {
+    return m_element_count_var;
+  }
+  const dwarf::DWARFDIE &GetUpperBoundDIE() const { return m_upper_bound_var; }
+  const dwarf::DWARFDIE &GetLowerBoundDIE() const { return m_lower_bound_var; }
+  const dwarf::DWARFDIE &GetByteStrideDIE() const { return m_byte_stride_var; }
+
   void SetLowerBound(const ArrayBound &lb) { m_lb = lb; }
   void SetUpperBound(const ArrayBound &ub) { m_ub = ub; }
   void SetByteStride(uint64_t byte_stride) { m_byte_stride = byte_stride; }
@@ -207,7 +215,9 @@ public:
 
   void Profile(llvm::FoldingSetNodeID &id) const {
     Profile(id, m_lb, m_ub, m_byte_stride, m_element_count, m_element_count_exp,
-            m_upper_bound_exp, m_lower_bound_exp, m_byte_stride_exp);
+            m_upper_bound_exp, m_lower_bound_exp, m_byte_stride_exp,
+            m_element_count_var, m_upper_bound_var, m_lower_bound_var,
+            m_byte_stride_var);
   }
 
   static void Profile(llvm::FoldingSetNodeID &id, const ArrayBound &lb,
@@ -217,7 +227,12 @@ public:
                       const DWARFExpressionList &element_count_exp,
                       const DWARFExpressionList &upper_bound_exp,
                       const DWARFExpressionList &lower_bound_exp,
-                      const DWARFExpressionList &byte_stride_exp) {
+                      const DWARFExpressionList &byte_stride_exp,
+
+                      const dwarf::DWARFDIE element_count_var,
+                      const dwarf::DWARFDIE upper_bound_var,
+                      const dwarf::DWARFDIE lower_bound_var,
+                      const dwarf::DWARFDIE byte_stride_var) {
     lb.Profile(id);
     ub.Profile(id);
     id.AddInteger(byte_stride);
@@ -226,6 +241,10 @@ public:
     id.AddBoolean(upper_bound_exp.IsValid());
     id.AddBoolean(lower_bound_exp.IsValid());
     id.AddBoolean(byte_stride_exp.IsValid());
+    id.AddBoolean(element_count_var.IsValid());
+    id.AddBoolean(upper_bound_var.IsValid());
+    id.AddBoolean(lower_bound_var.IsValid());
+    id.AddBoolean(byte_stride_var.IsValid());
   }
 
 private:
@@ -238,6 +257,11 @@ private:
   DWARFExpressionList m_upper_bound_exp;
   DWARFExpressionList m_lower_bound_exp;
   DWARFExpressionList m_byte_stride_exp;
+
+  dwarf::DWARFDIE m_element_count_var;
+  dwarf::DWARFDIE m_upper_bound_var;
+  dwarf::DWARFDIE m_lower_bound_var;
+  dwarf::DWARFDIE m_byte_stride_var;
 };
 
 class FortranArray : public FortranType {
@@ -245,7 +269,7 @@ public:
   FortranArray(CompilerType element_type,
                const llvm::SmallVectorImpl<ArrayShape> &dimensions,
                ConstString array_type_name, uint64_t total_array_size,
-               bool is_allocatable, bool is_dynamic, bool is_star,
+               bool is_allocatable, bool is_dynamic, bool is_star, bool is_auto,
                uint64_t total_elements, DWARFExpressionList allocated_exp,
                DWARFExpressionList data_location_exp)
       : FortranType(TypeKind::KIND_ARRAY, total_array_size, array_type_name),
@@ -253,8 +277,8 @@ public:
         m_dimensions(dimensions.begin(), dimensions.end()),
         m_is_allocatable(is_allocatable), m_is_dynamic(is_dynamic),
         m_is_star(is_star), m_total_elements(total_elements),
-        m_allocated_exp(allocated_exp), m_data_location_exp(data_location_exp) {
-  }
+        m_is_auto(is_auto), m_allocated_exp(allocated_exp),
+        m_data_location_exp(data_location_exp) {}
   CompilerType GetElementType() const { return m_element_type; }
   uint64_t GetTotalElements() const { return m_total_elements; }
   bool IsAllocatable() const { return m_is_allocatable; }
@@ -296,6 +320,7 @@ public:
     for (const auto &shape : dimensions)
       shape.Profile(id);
   }
+  bool IsAuto() { return m_is_auto; }
 
 private:
   CompilerType m_element_type;
@@ -305,6 +330,7 @@ private:
   // every time.
   bool m_is_dynamic;
   bool m_is_star;
+  bool m_is_auto;
   uint64_t m_total_elements;
   DWARFExpressionList m_allocated_exp;
   DWARFExpressionList m_data_location_exp;

@@ -102,19 +102,11 @@ FortranArrayMetadata ParseArray(const DWARFDIE &parent_die,
       case DW_AT_count:
         array_info.is_star = false;
         if (DWARFDIE var_die = die.GetReferencedDIE(DW_AT_count)) {
-          if (var_die.Tag() == DW_TAG_variable)
-            if (exe_ctx) {
-              if (auto frame = exe_ctx->GetFrameSP()) {
-                Status error;
-                lldb::VariableSP var_sp;
-                auto valobj_sp = frame->GetValueForVariableExpressionPath(
-                    var_die.GetName(), eNoDynamicValues, 0, var_sp, error);
-                if (valobj_sp) {
-                  num_elements = valobj_sp->GetValueAsUnsigned(0);
-                  break;
-                }
-              }
-            }
+          if (var_die.Tag() == DW_TAG_variable) {
+            num_elements = var_die;
+            array_info.is_auto = true;
+          }
+
         } else if (DWARFFormValue::IsBlockForm(form_value.Form())) {
           num_elements = GetDWARFExpression(die, form_value, module);
           array_info.is_dynamic = true;
@@ -123,28 +115,42 @@ FortranArrayMetadata ParseArray(const DWARFDIE &parent_die,
         break;
 
       case DW_AT_byte_stride:
-        if (DWARFFormValue::IsBlockForm(form_value.Form())) {
-          byte_stride = GetDWARFExpression(die, form_value, module);
-          array_info.is_dynamic = true;
-        } else
-          byte_stride = form_value.Unsigned();
+        if (DWARFDIE var_die = die.GetReferencedDIE(DW_AT_byte_stride))
+          if (var_die.Tag() == DW_TAG_variable) {
+            byte_stride = var_die;
+            array_info.is_auto = true;
+          }
+
+          else if (DWARFFormValue::IsBlockForm(form_value.Form())) {
+            byte_stride = GetDWARFExpression(die, form_value, module);
+            array_info.is_dynamic = true;
+          } else
+            byte_stride = form_value.Unsigned();
         break;
 
       case DW_AT_lower_bound:
-        if (DWARFFormValue::IsBlockForm(form_value.Form())) {
-          lower_bound = GetDWARFExpression(die, form_value, module);
-          array_info.is_dynamic = true;
-        } else
-          lower_bound = form_value.Signed();
+        if (DWARFDIE var_die = die.GetReferencedDIE(DW_AT_lower_bound))
+          if (var_die.Tag() == DW_TAG_variable) {
+            byte_stride = var_die;
+            array_info.is_auto = true;
+          } else if (DWARFFormValue::IsBlockForm(form_value.Form())) {
+            lower_bound = GetDWARFExpression(die, form_value, module);
+            array_info.is_dynamic = true;
+          } else
+            lower_bound = form_value.Signed();
         break;
 
       case DW_AT_upper_bound:
         array_info.is_star = false;
-        if (DWARFFormValue::IsBlockForm(form_value.Form())) {
-          array_info.is_dynamic = true;
-          upper_bound = GetDWARFExpression(die, form_value, module);
-        } else
-          upper_bound = form_value.Signed();
+        if (DWARFDIE var_die = die.GetReferencedDIE(DW_AT_upper_bound))
+          if (var_die.Tag() == DW_TAG_variable) {
+            byte_stride = var_die;
+            array_info.is_auto = true;
+          } else if (DWARFFormValue::IsBlockForm(form_value.Form())) {
+            array_info.is_dynamic = true;
+            upper_bound = GetDWARFExpression(die, form_value, module);
+          } else
+            upper_bound = form_value.Signed();
         break;
 
       default:
@@ -176,7 +182,6 @@ lldb::TypeSP DWARFASTParserFortran::ParseTypeFromDWARF(const SymbolContext &sc,
   TypeSP type_sp;
   if (type_is_new_ptr)
     *type_is_new_ptr = false;
-
   Log *log = GetLog(DWARFLog::TypeCompletion | DWARFLog::Lookups);
 
   if (die) {
@@ -260,8 +265,10 @@ lldb::TypeSP DWARFASTParserFortran::ParseTypeFromDWARF(const SymbolContext &sc,
             // at compile time
             if (!array_info.is_dynamic && !array_info.is_star) {
               for (size_t idx = 0; idx < array_info.dimensions.size(); idx++) {
-                total_elements *= std::get<uint64_t>(
-                    array_info.dimensions[idx].element_count);
+                if (std::holds_alternative<uint64_t>(
+                        array_info.dimensions[idx].element_count))
+                  total_elements *= std::get<uint64_t>(
+                      array_info.dimensions[idx].element_count);
               }
 
               // Total size is just total elements * the size of one element

@@ -327,7 +327,8 @@ CompilerType TypeSystemFortran::CreateArrayType(FortranArrayMetadata array_info,
   auto new_type_up = std::make_unique<FortranArray>(
       array_info.element_type, array_shapes, array_type_name, total_array_size,
       array_info.is_allocatable, array_info.is_dynamic, array_info.is_star,
-      total_elements, array_info.allocated_exp, array_info.data_location_exp);
+      array_info.is_auto, total_elements, array_info.allocated_exp,
+      array_info.data_location_exp);
 
   array_type = new_type_up.get();
   m_arrays.InsertNode(array_type, insert_pos);
@@ -359,7 +360,7 @@ llvm::Expected<CompilerType> TypeSystemFortran::GetChildCompilerTypeAtIndex(
   if (!fortran_type)
     return CompilerType();
 
-  if (fortran_type->IsDynamic())
+  if (fortran_type->IsDynamic() || fortran_type->IsAuto())
     return CompilerType();
 
   llvm::ArrayRef<ArrayShape> old_dimensions = fortran_type->GetDimensions();
@@ -424,7 +425,8 @@ llvm::Expected<CompilerType> TypeSystemFortran::GetChildCompilerTypeAtIndex(
     auto new_type_up = std::make_unique<FortranArray>(
         fortran_type->GetElementType(), new_dimensions, type_name,
         child_byte_size, false, false, fortran_type->IsStar(),
-        new_total_elements, DWARFExpressionList(), DWARFExpressionList());
+        fortran_type->IsAuto(), new_total_elements, DWARFExpressionList(),
+        DWARFExpressionList());
     array_type = new_type_up.get();
     m_arrays.InsertNode(array_type, insert_pos);
     m_types.push_back(std::move(new_type_up));
