@@ -130,7 +130,7 @@ lldb::ChildCacheState DynamicArraySyntheticFrontEnd::Update() {
     llvm::Expected<Value> array_addr_or_err =
         data_location_exp.Evaluate(&exe_ctx, nullptr, loclist_base_load_addr,
                                    nullptr, &object_address_val);
-    if (!array_addr_or_err && array_type->IsDynamic()) {
+    if (!array_addr_or_err) {
       llvm::consumeError(array_addr_or_err.takeError());
       return lldb::ChildCacheState::eRefetch;
     }
@@ -151,7 +151,7 @@ lldb::ChildCacheState DynamicArraySyntheticFrontEnd::Update() {
   array_info.element_type = m_element_type;
   array_info.is_allocatable = array_type->IsAllocatable();
   array_info.is_dynamic = false;
-  array_info.is_star = false;
+  array_info.is_star = array_type->IsStar();
   for (ArrayShape dimension : dimensions) {
     FortranDimension dimension_info;
     DWARFExpressionList lower_bound_exp = dimension.GetLowerBoundExpression();
@@ -178,14 +178,14 @@ lldb::ChildCacheState DynamicArraySyntheticFrontEnd::Update() {
           lower_bound.ResolveValue(&exe_ctx).SLongLong(0);
     } else if (lower_bound_var.IsValid()) {
       if (auto frame = exe_ctx.GetFrameSP()) {
-        Status error;
-        lldb::VariableSP var_sp;
-        auto valobj_sp = frame->GetValueForVariableExpressionPath(
-            lower_bound_var.GetName(), eNoDynamicValues, 0, var_sp, error);
-        if (valobj_sp) {
+        // Fortran generates hidden variables that start with a dot. DIL
+        // rejects variables starting with a dot, so we have to find the
+        // variable manually.
+        auto valobj_sp =
+            frame->FindVariable(ConstString(lower_bound_var.GetName()));
+
+        if (valobj_sp)
           dimension_info.lower_bound = valobj_sp->GetValueAsSigned(0);
-          break;
-        }
       }
     } else
       dimension_info.lower_bound = dimension.GetLowerBound().GetBound();
@@ -201,16 +201,17 @@ lldb::ChildCacheState DynamicArraySyntheticFrontEnd::Update() {
       }
       Value element_count = *element_count_or_err;
       dimension_info.element_count =
-          element_count.ResolveValue(&exe_ctx).ULongLong(0);
+          element_count.ResolveValue(&exe_ctx).SLongLong(0);
     } else if (element_count_var.IsValid()) {
       if (auto frame = exe_ctx.GetFrameSP()) {
-        Status error;
-        lldb::VariableSP var_sp;
-        auto valobj_sp = frame->GetValueForVariableExpressionPath(
-            element_count_var.GetName(), eNoDynamicValues, 0, var_sp, error);
-        if (valobj_sp) {
-          dimension_info.element_count = valobj_sp->GetValueAsUnsigned(0);
-        }
+        // Fortran generates hidden variables that start with a dot. DIL
+        // rejects variables starting with a dot, so we have to find the
+        // variable manually.
+        auto valobj_sp =
+            frame->FindVariable(ConstString(element_count_var.GetName()));
+
+        if (valobj_sp)
+          dimension_info.element_count = valobj_sp->GetValueAsSigned(0);
       }
     } else
       dimension_info.element_count = dimension.GetElementCount();
@@ -229,20 +230,23 @@ lldb::ChildCacheState DynamicArraySyntheticFrontEnd::Update() {
           upper_bound.ResolveValue(&exe_ctx).SLongLong(0);
     } else if (upper_bound_var.IsValid()) {
       if (auto frame = exe_ctx.GetFrameSP()) {
-        Status error;
-        lldb::VariableSP var_sp;
-        auto valobj_sp = frame->GetValueForVariableExpressionPath(
-            upper_bound_var.GetName(), eNoDynamicValues, 0, var_sp, error);
-        if (valobj_sp) {
+        // Fortran generates hidden variables that start with a dot. DIL
+        // rejects variables starting with a dot, so we have to find the
+        // variable manually.
+        auto valobj_sp =
+            frame->FindVariable(ConstString(upper_bound_var.GetName()));
+
+        if (valobj_sp)
           dimension_info.upper_bound = valobj_sp->GetValueAsSigned(0);
-        }
       }
     } else if (dimension.GetUpperBound().IsBoundKnown())
       dimension_info.upper_bound = dimension.GetUpperBound().GetBound();
-    else
+    else {
+      int64_t count = std::get<int64_t>(dimension_info.element_count);
       dimension_info.upper_bound =
           std::get<int64_t>(dimension_info.lower_bound) +
-          std::get<uint64_t>(dimension_info.element_count);
+          (count > 0 ? count - 1 : 0);
+    }
 
     if (byte_stride_exp.IsValid()) {
       llvm::Expected<Value> byte_stride_or_err =
@@ -255,19 +259,21 @@ lldb::ChildCacheState DynamicArraySyntheticFrontEnd::Update() {
 
       Value byte_stride = *byte_stride_or_err;
       dimension_info.byte_stride =
-          byte_stride.ResolveValue(&exe_ctx).ULongLong(0);
+          byte_stride.ResolveValue(&exe_ctx).SLongLong(0);
     } else if (byte_stride_var.IsValid()) {
       if (auto frame = exe_ctx.GetFrameSP()) {
-        Status error;
-        lldb::VariableSP var_sp;
-        auto valobj_sp = frame->GetValueForVariableExpressionPath(
-            byte_stride_var.GetName(), eNoDynamicValues, 0, var_sp, error);
-        if (valobj_sp) {
-          dimension_info.byte_stride = valobj_sp->GetValueAsUnsigned(0);
-        }
+        // Fortran generates hidden variables that start with a dot. DIL
+        // rejects variables starting with a dot, so we have to find the
+        // variable manually.
+        auto valobj_sp =
+            frame->FindVariable(ConstString(byte_stride_var.GetName()));
+
+        if (valobj_sp)
+          dimension_info.byte_stride = valobj_sp->GetValueAsSigned(0);
       }
-    } else
+    } else {
       dimension_info.byte_stride = dimension.GetByteStride();
+    }
 
     array_info.dimensions.push_back(dimension_info);
   }
@@ -275,25 +281,31 @@ lldb::ChildCacheState DynamicArraySyntheticFrontEnd::Update() {
   uint64_t total_array_size = 0;
 
   for (auto &dim : array_info.dimensions) {
-    uint64_t count = std::get<uint64_t>(dim.element_count);
+    int64_t count = 0;
+    if (const auto *s_val = std::get_if<int64_t>(&dim.element_count))
+      count = *s_val;
+    int64_t lb = 1;
+    int64_t ub = -1;
 
-    int64_t lb = 0;
-    int64_t ub = 0;
     if (const auto *l_val = std::get_if<int64_t>(&dim.lower_bound))
       lb = *l_val;
     if (const auto *u_val = std::get_if<int64_t>(&dim.upper_bound))
       ub = *u_val;
 
     if (count == 0) {
-      if (ub >= lb) {
+      if (ub >= lb)
         count = ub - lb + 1;
-      } else if (array_info.is_star && &dim == &array_info.dimensions.back()) {
-        count = 0;
-      }
-    }
+      else if (array_info.is_star && &dim == &array_info.dimensions.back())
+        count = 1;
+    } else
+      // If we have count but upper bound was missing or 0, calculate it
+      if (count > 0 && ub == -1)
+        ub = lb + count - 1;
 
-    // Update the struct so it's correct for later indexing math
     dim.element_count = count;
+    dim.lower_bound = lb;
+    dim.upper_bound = ub;
+
     total_elements *= count;
   }
 
@@ -325,8 +337,7 @@ llvm::Expected<uint32_t> DynamicArraySyntheticFrontEnd::CalculateNumChildren() {
     return 0;
 
   ArrayShape first_dimension = array_type->GetDimensions().front();
-
-  return first_dimension.GetNumberOfElements();
+  return first_dimension.GetElementCount();
 }
 
 lldb::ValueObjectSP
@@ -361,7 +372,7 @@ DynamicArraySyntheticFrontEnd::GetChildAtIndex(uint32_t idx) {
   std::string child_name;
   llvm::ArrayRef<ArrayShape> old_dimensions = fortran_type->GetDimensions();
   int64_t lb = old_dimensions.front().GetLowerBound().GetBound();
-  uint64_t num_elements = old_dimensions.front().GetNumberOfElements();
+  uint64_t num_elements = old_dimensions.front().GetElementCount();
 
   if (idx > num_elements)
     return ValueObjectSP();

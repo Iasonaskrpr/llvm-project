@@ -111,7 +111,7 @@ FortranArrayMetadata ParseArray(const DWARFDIE &parent_die,
           num_elements = GetDWARFExpression(die, form_value, module);
           array_info.is_dynamic = true;
         } else
-          num_elements = form_value.Unsigned();
+          num_elements = form_value.Signed();
         break;
 
       case DW_AT_byte_stride:
@@ -125,7 +125,7 @@ FortranArrayMetadata ParseArray(const DWARFDIE &parent_die,
             byte_stride = GetDWARFExpression(die, form_value, module);
             array_info.is_dynamic = true;
           } else
-            byte_stride = form_value.Unsigned();
+            byte_stride = form_value.Signed();
         break;
 
       case DW_AT_lower_bound:
@@ -161,9 +161,8 @@ FortranArrayMetadata ParseArray(const DWARFDIE &parent_die,
     if (std::holds_alternative<std::monostate>(num_elements)) {
       if (std::holds_alternative<std::int64_t>(upper_bound) &&
           std::holds_alternative<std::int64_t>(lower_bound))
-        num_elements =
-            static_cast<uint64_t>(std::get<int64_t>(upper_bound) -
-                                  std::get<int64_t>(lower_bound) + 1);
+        num_elements = static_cast<int64_t>(std::get<int64_t>(upper_bound) -
+                                            std::get<int64_t>(lower_bound) + 1);
     }
     FortranDimension dimension;
     dimension.element_count = num_elements;
@@ -265,9 +264,9 @@ lldb::TypeSP DWARFASTParserFortran::ParseTypeFromDWARF(const SymbolContext &sc,
             // at compile time
             if (!array_info.is_dynamic && !array_info.is_star) {
               for (size_t idx = 0; idx < array_info.dimensions.size(); idx++) {
-                if (std::holds_alternative<uint64_t>(
+                if (std::holds_alternative<int64_t>(
                         array_info.dimensions[idx].element_count))
-                  total_elements *= std::get<uint64_t>(
+                  total_elements *= std::get<int64_t>(
                       array_info.dimensions[idx].element_count);
               }
 

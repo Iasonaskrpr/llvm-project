@@ -603,10 +603,19 @@ CompilerType CompilerType::GetArrayType(uint64_t size) const {
   }
   return CompilerType();
 }
+
 int64_t CompilerType::GetArrayLowerBound() const {
   if (IsValid()) {
     if (auto type_system_sp = GetTypeSystem())
       return type_system_sp->GetArrayLowerBound(m_type);
+  }
+  return 0;
+}
+
+int64_t CompilerType::GetArrayByteStride() const {
+  if (IsValid()) {
+    if (auto type_system_sp = GetTypeSystem())
+      return type_system_sp->GetArrayByteStride(m_type);
   }
   return 0;
 }

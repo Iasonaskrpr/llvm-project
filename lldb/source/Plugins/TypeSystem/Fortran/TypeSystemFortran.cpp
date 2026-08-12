@@ -243,25 +243,26 @@ CompilerType TypeSystemFortran::CreateArrayType(FortranArrayMetadata array_info,
       shape.SetByteStride(*byte_stride_or_err);
     }
 
-    else if (std::holds_alternative<uint64_t>(
+    else if (std::holds_alternative<int64_t>(
                  array_info.dimensions[idx].byte_stride))
       shape.SetByteStride(
-          std::get<uint64_t>(array_info.dimensions[idx].byte_stride));
+          std::get<int64_t>(array_info.dimensions[idx].byte_stride));
     // If the elements for this dimension are unknown it is either colon or star
     // Star can only appear as the last bound
 
-    if (!std::holds_alternative<uint64_t>(
+    if (!std::holds_alternative<int64_t>(
             array_info.dimensions[idx].element_count)) {
       bound_category = ArrayBound::Category::Colon;
 
       if (array_info.is_star && idx == rank - 1)
         bound_category = ArrayBound::Category::Star;
-    }
-
-    else {
+      shape.SetElementCount(0);
+    } else {
       bound_category = ArrayBound::Category::Explicit;
-      dim_elements =
-          std::get<uint64_t>(array_info.dimensions[idx].element_count);
+      if (std::holds_alternative<int64_t>(
+              array_info.dimensions[idx].element_count))
+        dim_elements =
+            std::get<int64_t>(array_info.dimensions[idx].element_count);
       shape.SetElementCount(dim_elements);
     }
 
@@ -275,6 +276,8 @@ CompilerType TypeSystemFortran::CreateArrayType(FortranArrayMetadata array_info,
       lb.SetBound(lbound);
       if (dim_elements != -1)
         ub.SetBound(lbound + dim_elements - 1);
+      else
+        ub.SetBound(-1);
     }
 
     else if (std::holds_alternative<std::monostate>(
@@ -293,21 +296,37 @@ CompilerType TypeSystemFortran::CreateArrayType(FortranArrayMetadata array_info,
             array_info.dimensions[idx].upper_bound))
       shape.SetUpperBoundExpression(std::get<DWARFExpressionList>(
           array_info.dimensions[idx].upper_bound));
+    else if (std::holds_alternative<DWARFDIE>(
+                 array_info.dimensions[idx].upper_bound))
+      shape.SetUpperBoundDIE(
+          std::get<DWARFDIE>(array_info.dimensions[idx].upper_bound));
 
     if (std::holds_alternative<DWARFExpressionList>(
             array_info.dimensions[idx].lower_bound))
       shape.SetLowerBoundExpression(std::get<DWARFExpressionList>(
           array_info.dimensions[idx].lower_bound));
+    else if (std::holds_alternative<DWARFDIE>(
+                 array_info.dimensions[idx].lower_bound))
+      shape.SetLowerBoundDIE(
+          std::get<DWARFDIE>(array_info.dimensions[idx].lower_bound));
 
     if (std::holds_alternative<DWARFExpressionList>(
             array_info.dimensions[idx].element_count))
       shape.SetElementCountExpression(std::get<DWARFExpressionList>(
           array_info.dimensions[idx].element_count));
+    else if (std::holds_alternative<DWARFDIE>(
+                 array_info.dimensions[idx].element_count))
+      shape.SetElementCountDIE(
+          std::get<DWARFDIE>(array_info.dimensions[idx].element_count));
 
     if (std::holds_alternative<DWARFExpressionList>(
             array_info.dimensions[idx].byte_stride))
       shape.SetByteStrideExpression(std::get<DWARFExpressionList>(
           array_info.dimensions[idx].byte_stride));
+    else if (std::holds_alternative<DWARFDIE>(
+                 array_info.dimensions[idx].byte_stride))
+      shape.SetByteStrideDIE(
+          std::get<DWARFDIE>(array_info.dimensions[idx].byte_stride));
 
     array_shapes.push_back(shape);
   }
@@ -371,8 +390,8 @@ llvm::Expected<CompilerType> TypeSystemFortran::GetChildCompilerTypeAtIndex(
   // by casting the index to a signed integer we can access elements with
   // negative indices.
   if (!fortran_type->IsStar()) {
-    num_elements = old_dimensions.front().GetNumberOfElements();
-    if (idx >= num_elements)
+    num_elements = old_dimensions.front().GetElementCount();
+    if (idx >= num_elements && num_elements > 0)
       return CompilerType();
   }
 
@@ -383,19 +402,18 @@ llvm::Expected<CompilerType> TypeSystemFortran::GetChildCompilerTypeAtIndex(
 
     ArrayShape old_first_dimension = old_dimensions.front();
     uint64_t new_byte_stride;
-
     if (old_first_dimension.GetByteStride() != 0)
-      new_byte_stride = old_first_dimension.GetNumberOfElements() *
+      new_byte_stride = old_first_dimension.GetElementCount() *
                         old_first_dimension.GetByteStride();
     else
-      new_byte_stride = old_first_dimension.GetNumberOfElements() *
+      new_byte_stride = old_first_dimension.GetElementCount() *
                         fortran_type->GetElementByteSize();
 
     new_dimensions.front().SetByteStride(new_byte_stride);
-    bool is_star = new_dimensions.back().GetLowerBound().IsStar();
+    bool is_star = fortran_type->IsStar();
     bool is_allocatable = fortran_type->IsAllocatable();
     uint64_t new_total_elements = fortran_type->GetTotalElements() /
-                                  old_first_dimension.GetNumberOfElements();
+                                  old_first_dimension.GetElementCount();
     if (old_dimensions.front().GetByteStride() != 0)
       child_byte_offset = idx * old_dimensions.front().GetByteStride();
     else
@@ -405,7 +423,7 @@ llvm::Expected<CompilerType> TypeSystemFortran::GetChildCompilerTypeAtIndex(
 
     if (last_dim_stride != 0) {
       child_byte_size =
-          new_dimensions.back().GetNumberOfElements() * last_dim_stride;
+          new_dimensions.back().GetElementCount() * last_dim_stride;
     } else {
       child_byte_size = new_total_elements * fortran_type->GetElementByteSize();
     }
@@ -467,6 +485,18 @@ int64_t TypeSystemFortran::GetArrayLowerBound(opaque_compiler_type_t type) {
   if (!array_type->GetDimensions().front().GetLowerBound().IsBoundKnown())
     return 0;
   return array_type->GetDimensions().front().GetLowerBound().GetBound();
+}
+
+int64_t TypeSystemFortran::GetArrayByteStride(opaque_compiler_type_t type) {
+  if (!type)
+    return 0;
+  FortranType *fortran_type = static_cast<FortranType *>(type);
+  if (!fortran_type)
+    return 0;
+  if (fortran_type->GetKind() != FortranType::KIND_ARRAY)
+    return 0;
+  FortranArray *array_type = static_cast<FortranArray *>(fortran_type);
+  return array_type->GetDimensions().front().GetByteStride();
 }
 
 /// Returns the type name upper-cased to follow Fortran's general style
@@ -676,7 +706,7 @@ TypeSystemFortran::GetNumChildren(opaque_compiler_type_t type,
     if (!fortran_array->IsDynamic()) {
       if (fortran_array->GetDimensions().empty() || fortran_array->IsStar())
         return 0;
-      return fortran_array->GetDimensions().front().GetNumberOfElements();
+      return fortran_array->GetDimensions().front().GetElementCount();
     }
     return 0;
   }

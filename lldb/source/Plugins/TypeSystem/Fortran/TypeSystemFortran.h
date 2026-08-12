@@ -249,6 +249,8 @@ public:
 
   int64_t GetArrayLowerBound(lldb::opaque_compiler_type_t type) override;
 
+  int64_t GetArrayByteStride(lldb::opaque_compiler_type_t type) override;
+
   CompilerType GetExplicitArrayType(lldb::opaque_compiler_type_t type,
                                     lldb::user_id_t valobj_id) override;
   //

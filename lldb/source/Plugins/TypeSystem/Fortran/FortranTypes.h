@@ -23,7 +23,6 @@ namespace plugin {
 namespace fortran {
 using DWARFValue =
     std::variant<std::monostate, // Represents "Default" or "Not Present"
-                 uint64_t,       // Constant value (e.g., constant byte stride)
                  int64_t,
                  // Dynamic expression (e.g., variable/runtime stride)
                  DWARFExpressionList, dwarf::DWARFDIE>;
@@ -166,12 +165,8 @@ public:
 
   const ArrayBound &GetLowerBound() const { return m_lb; }
   const ArrayBound &GetUpperBound() const { return m_ub; }
-  uint64_t GetByteStride() const { return m_byte_stride; }
-  uint64_t GetElementCount() const { return m_element_count; }
-
-  int64_t GetNumberOfElements() const {
-    return m_ub.GetBound() - m_lb.GetBound() + 1;
-  }
+  int64_t GetByteStride() const { return m_byte_stride; }
+  int64_t GetElementCount() const { return m_element_count; }
 
   const DWARFExpressionList &GetElementCountExpression() const {
     return m_element_count_exp;
@@ -195,8 +190,8 @@ public:
 
   void SetLowerBound(const ArrayBound &lb) { m_lb = lb; }
   void SetUpperBound(const ArrayBound &ub) { m_ub = ub; }
-  void SetByteStride(uint64_t byte_stride) { m_byte_stride = byte_stride; }
-  void SetElementCount(uint64_t element_count) {
+  void SetByteStride(int64_t byte_stride) { m_byte_stride = byte_stride; }
+  void SetElementCount(int64_t element_count) {
     m_element_count = element_count;
   }
 
@@ -211,6 +206,19 @@ public:
   }
   void SetByteStrideExpression(DWARFExpressionList expr) {
     m_byte_stride_exp = std::move(expr);
+  }
+
+  void SetUpperBoundDIE(dwarf::DWARFDIE die) {
+    m_upper_bound_var = std::move(die);
+  }
+  void SetLowerBoundDIE(dwarf::DWARFDIE die) {
+    m_lower_bound_var = std::move(die);
+  }
+  void SetByteStrideDIE(dwarf::DWARFDIE die) {
+    m_byte_stride_var = std::move(die);
+  }
+  void SetElementCountDIE(dwarf::DWARFDIE die) {
+    m_element_count_var = std::move(die);
   }
 
   void Profile(llvm::FoldingSetNodeID &id) const {
@@ -250,8 +258,8 @@ public:
 private:
   ArrayBound m_lb;
   ArrayBound m_ub;
-  uint64_t m_byte_stride;
-  uint64_t m_element_count;
+  int64_t m_byte_stride;
+  int64_t m_element_count;
 
   DWARFExpressionList m_element_count_exp;
   DWARFExpressionList m_upper_bound_exp;
@@ -373,9 +381,8 @@ inline ConstString CreateArrayTypeName(const CompilerType &element_type,
     const ArrayBound &lb = shapes[idx].GetLowerBound();
     const ArrayBound &ub = shapes[idx].GetUpperBound();
 
-    if (ub.IsStar()) {
-      // Assuming you want standard Fortran syntax (e.g., "1:*")
-      if (lb.IsExplicit())
+    if (is_star && idx == rank - 1) {
+      if (lb.IsExplicit() && lb.GetBound() != 1)
         name_stream << lb.GetBound() << ":";
       name_stream << "*";
     } else if (ub.IsColon()) {
