@@ -394,7 +394,8 @@ llvm::Expected<CompilerType> TypeSystemFortran::GetChildCompilerTypeAtIndex(
     if (idx >= num_elements && num_elements > 0)
       return CompilerType();
   }
-
+  int32_t real_idx = idx + lb;
+  child_name = llvm::formatv("[{0}]", real_idx);
   if (old_dimensions.size() > 1) {
 
     llvm::SmallVector<ArrayShape, 2> new_dimensions(old_dimensions.begin() + 1,
@@ -427,7 +428,6 @@ llvm::Expected<CompilerType> TypeSystemFortran::GetChildCompilerTypeAtIndex(
     } else {
       child_byte_size = new_total_elements * fortran_type->GetElementByteSize();
     }
-    child_name = llvm::formatv("[{0}]", idx + lb);
     llvm::FoldingSetNodeID id;
     FortranArray::Profile(id, fortran_type->GetElementType(), new_dimensions,
                           false, false, DWARFExpressionList(),

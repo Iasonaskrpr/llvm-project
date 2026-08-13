@@ -284,8 +284,8 @@ public:
         m_element_type(element_type),
         m_dimensions(dimensions.begin(), dimensions.end()),
         m_is_allocatable(is_allocatable), m_is_dynamic(is_dynamic),
-        m_is_star(is_star), m_total_elements(total_elements),
-        m_is_auto(is_auto), m_allocated_exp(allocated_exp),
+        m_is_star(is_star), m_is_auto(is_auto),
+        m_total_elements(total_elements), m_allocated_exp(allocated_exp),
         m_data_location_exp(data_location_exp) {}
   CompilerType GetElementType() const { return m_element_type; }
   uint64_t GetTotalElements() const { return m_total_elements; }

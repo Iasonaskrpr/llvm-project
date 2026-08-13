@@ -371,13 +371,10 @@ DynamicArraySyntheticFrontEnd::GetChildAtIndex(uint32_t idx) {
   const bool transparent_pointers = true;
   std::string child_name;
   llvm::ArrayRef<ArrayShape> old_dimensions = fortran_type->GetDimensions();
-  int64_t lb = old_dimensions.front().GetLowerBound().GetBound();
   uint64_t num_elements = old_dimensions.front().GetElementCount();
 
   if (idx > num_elements)
     return ValueObjectSP();
-
-  child_name = llvm::formatv("[{0}]", idx + lb);
   llvm::Expected<CompilerType> child_type_orr_err =
       m_ast_sp->GetChildCompilerTypeAtIndex(
           raw_type, &exe_ctx, idx, transparent_pointers,

@@ -106,7 +106,6 @@ FortranArrayMetadata ParseArray(const DWARFDIE &parent_die,
             num_elements = var_die;
             array_info.is_auto = true;
           }
-
         } else if (DWARFFormValue::IsBlockForm(form_value.Form())) {
           num_elements = GetDWARFExpression(die, form_value, module);
           array_info.is_dynamic = true;
@@ -115,42 +114,44 @@ FortranArrayMetadata ParseArray(const DWARFDIE &parent_die,
         break;
 
       case DW_AT_byte_stride:
-        if (DWARFDIE var_die = die.GetReferencedDIE(DW_AT_byte_stride))
+        if (DWARFDIE var_die = die.GetReferencedDIE(DW_AT_byte_stride)) {
           if (var_die.Tag() == DW_TAG_variable) {
             byte_stride = var_die;
             array_info.is_auto = true;
           }
-
-          else if (DWARFFormValue::IsBlockForm(form_value.Form())) {
-            byte_stride = GetDWARFExpression(die, form_value, module);
-            array_info.is_dynamic = true;
-          } else
-            byte_stride = form_value.Signed();
+        } else if (DWARFFormValue::IsBlockForm(form_value.Form())) {
+          byte_stride = GetDWARFExpression(die, form_value, module);
+          array_info.is_dynamic = true;
+        } else
+          byte_stride = form_value.Signed();
         break;
 
       case DW_AT_lower_bound:
-        if (DWARFDIE var_die = die.GetReferencedDIE(DW_AT_lower_bound))
+        if (DWARFDIE var_die = die.GetReferencedDIE(DW_AT_lower_bound)) {
           if (var_die.Tag() == DW_TAG_variable) {
             byte_stride = var_die;
             array_info.is_auto = true;
-          } else if (DWARFFormValue::IsBlockForm(form_value.Form())) {
-            lower_bound = GetDWARFExpression(die, form_value, module);
-            array_info.is_dynamic = true;
-          } else
-            lower_bound = form_value.Signed();
+          }
+        } else if (DWARFFormValue::IsBlockForm(form_value.Form())) {
+          lower_bound = GetDWARFExpression(die, form_value, module);
+          array_info.is_dynamic = true;
+        } else
+          lower_bound = form_value.Signed();
+
         break;
 
       case DW_AT_upper_bound:
         array_info.is_star = false;
-        if (DWARFDIE var_die = die.GetReferencedDIE(DW_AT_upper_bound))
+        if (DWARFDIE var_die = die.GetReferencedDIE(DW_AT_upper_bound)) {
           if (var_die.Tag() == DW_TAG_variable) {
             byte_stride = var_die;
             array_info.is_auto = true;
-          } else if (DWARFFormValue::IsBlockForm(form_value.Form())) {
-            array_info.is_dynamic = true;
-            upper_bound = GetDWARFExpression(die, form_value, module);
-          } else
-            upper_bound = form_value.Signed();
+          }
+        } else if (DWARFFormValue::IsBlockForm(form_value.Form())) {
+          array_info.is_dynamic = true;
+          upper_bound = GetDWARFExpression(die, form_value, module);
+        } else
+          upper_bound = form_value.Signed();
         break;
 
       default:
