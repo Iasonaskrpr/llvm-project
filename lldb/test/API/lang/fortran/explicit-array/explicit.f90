@@ -1,7 +1,6 @@
 program explicit_arrays
     implicit none
 
-    ! Loop indices for up to 7 dimensions
     integer :: i, j, k, l, m, n, o
     integer :: val_count
 
@@ -11,19 +10,14 @@ program explicit_arrays
     real(8) :: arr_3d_mixed(0:2, -3:-1, 4:5)
     integer(1) :: arr_7d(1:2, 1:2, 1:2, 1:2, 1:2, 1:2, 1:2)
 
-    ! --- Initialize elements using standard DO loops ---
-    
-    ! 1D Default (Values 1 to 10)
     do i = 1, 10
         arr_1d_default(i) = i
     end do
     
-    ! 1D Custom (Values based on their custom index)
     do i = -5, 5
         arr_1d_custom(i) = real(i) + 0.5
     end do
     
-    ! 2D Default (Alternating true/false using modulo)
     val_count = 1
     do j = 1, 3
         do i = 1, 3
@@ -32,7 +26,6 @@ program explicit_arrays
         end do
     end do
     
-    ! 3D Mixed (Values 1.1 to 18.1)
     val_count = 1
     do k = 4, 5
         do j = -3, -1
@@ -43,7 +36,6 @@ program explicit_arrays
         end do
     end do
     
-    ! 7D (Values 0 to 127 to fit safely inside integer(1))
     val_count = 0
     do o = 1, 2
         do n = 1, 2
@@ -62,7 +54,6 @@ program explicit_arrays
         end do
     end do
 
-    ! --- Overwrite specific boundary elements for testing ---
     arr_1d_default(1) = 100
     arr_1d_default(10) = 999
     

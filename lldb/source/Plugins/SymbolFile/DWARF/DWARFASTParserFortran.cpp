@@ -129,7 +129,7 @@ FortranArrayMetadata ParseArray(const DWARFDIE &parent_die,
       case DW_AT_lower_bound:
         if (DWARFDIE var_die = die.GetReferencedDIE(DW_AT_lower_bound)) {
           if (var_die.Tag() == DW_TAG_variable) {
-            byte_stride = var_die;
+            lower_bound = var_die;
             array_info.is_auto = true;
           }
         } else if (DWARFFormValue::IsBlockForm(form_value.Form())) {
@@ -144,7 +144,7 @@ FortranArrayMetadata ParseArray(const DWARFDIE &parent_die,
         array_info.is_star = false;
         if (DWARFDIE var_die = die.GetReferencedDIE(DW_AT_upper_bound)) {
           if (var_die.Tag() == DW_TAG_variable) {
-            byte_stride = var_die;
+            upper_bound = var_die;
             array_info.is_auto = true;
           }
         } else if (DWARFFormValue::IsBlockForm(form_value.Form())) {

@@ -1,28 +1,23 @@
 """
-Tests that arrays with no runtime information display elements correctly, with the proper bounds 
+Tests that arrays with no runtime information display elements correctly,
+with the proper bounds.
 """
 
 import lldb
 import lldbsuite.test.lldbutil as lldbutil
 from lldbsuite.test.lldbtest import *
 
+class FortranTestExplicitArrays(TestBase):
 
-class FortranTestComplex(TestBase):
-
-    def test_fortran_explicit_arrays(self):
-        """Tests that explicit arrays display the elements as expected"""
+    def test_simple_explicit_arrays(self):
+        """Test that explicit arrays with no custom bounds display properly."""
         self.build()
         self.main_source_file = lldb.SBFileSpec("explicit.f90")
         (target, process, thread, bkpt) = lldbutil.run_to_source_breakpoint(
             self, "! Break here", self.main_source_file
         )
-
         frame = thread.GetFrameAtIndex(0)
 
-        # ---------------------------------------------------------
-        # 1D Default Array
-        # ---------------------------------------------------------
-        # Method 2: Testing the entire array structure in one go using children
         self.expect_var_path(
             "arr_1d_default",
             type="INTEGER(10)",
@@ -40,10 +35,57 @@ class FortranTestComplex(TestBase):
             ]
         )
 
-        # ---------------------------------------------------------
-        # 1D Custom Array (-5 to 5)
-        # ---------------------------------------------------------
-        # Method 2: Verifying the custom negative bounds directly via children
+        self.expect(
+            "frame variable arr_2d_default",
+            substrs=[
+                "(LOGICAL(3, 3))",
+                "arr_2d_default = {",
+                "[1] = ([1] = true, [2] = true, [3] = false)",
+                "[2] = ([1] = true, [2] = false, [3] = true)",
+                "[3] = ([1] = false, [2] = true, [3] = false)",
+                "}",
+            ],
+        )
+
+        self.expect(
+            "frame variable arr_2d_default[1]",
+            substrs=[
+                "(LOGICAL(3))",
+                "arr_2d_default[1] = ([1] = true, [2] = true, [3] = false)",
+            ],
+        )
+        self.expect(
+            "frame variable arr_2d_default[1][2]",
+            substrs=["(LOGICAL)", "arr_2d_default[1][2] = true"],
+        )
+
+        self.expect_var_path(
+            "arr_2d_default[1]",
+            type="LOGICAL(3)",
+            children=[
+                ValueCheck(name="[1]", value="true"),
+                ValueCheck(name="[2]", value="true"),
+                ValueCheck(name="[3]", value="false"),
+            ],
+        )
+
+        self.expect_var_path("arr_7d", type="INTEGER(KIND=1)(2, 2, 2, 2, 2, 2, 2)")
+        self.expect_var_path(
+            "arr_7d[2][2][2][2][2][2][2]", type="INTEGER(KIND=1)", value="127"
+        )
+        self.expect_var_path(
+            "arr_7d[1][1][1][1][1][1][1]", type="INTEGER(KIND=1)", value="1"
+        )
+
+    def test_stress_explicit_bounds(self):
+        """Test that explicit arrays with custom bounds display properly."""
+        self.build()
+        self.main_source_file = lldb.SBFileSpec("explicit.f90")
+        target, process, thread, bkpt = lldbutil.run_to_source_breakpoint(
+            self, "! Break here", self.main_source_file
+        )
+        frame = thread.GetFrameAtIndex(0)
+
         self.expect_var_path(
             "arr_1d_custom",
             type="REAL(-5:5)",
@@ -62,54 +104,28 @@ class FortranTestComplex(TestBase):
             ]
         )
 
-        # ---------------------------------------------------------
-        # 2D Default Array
-        # ---------------------------------------------------------
-        self.expect_var_path("arr_2d_default", type="LOGICAL(3, 3)")
-        
-        # Testing a 1D slice of the 2D array to prove nested synthetic bounds
-        self.expect_var_path(
-            "arr_2d_default[1]",
-            type="LOGICAL(3)",
-            children=[
-                ValueCheck(name="[1]", value="true"),
-                ValueCheck(name="[2]", value="true"),
-                ValueCheck(name="[3]", value="false"),
-            ]
-        )
-
-        # ---------------------------------------------------------
-        # 3D Mixed Array
-        # ---------------------------------------------------------
         self.expect_var_path("arr_3d_mixed", type="REAL(KIND=8)(0:2, -3:-1, 4:5)")
         
         arr_3d_mixed = frame.FindVariable("arr_3d_mixed")
         first_element = arr_3d_mixed.GetChildAtIndex(0).GetChildAtIndex(0).GetChildAtIndex(0)
         
-        # Check value (using "in" to avoid strict float formatting mismatches)
-        self.assertTrue(first_element.IsValid(), "Failed to fetch first_element")
-        actual_val = float(first_element.GetValue())
-        self.assertAlmostEqual(actual_val, 3.14159, places=5, 
-                               msg=f"Expected ~3.14159, got {actual_val}")
-        last_3d_element = arr_3d_mixed.GetChildAtIndex(2).GetChildAtIndex(2).GetChildAtIndex(1)
-        self.assertTrue(last_3d_element.IsValid(), "Failed to fetch last 3d element")
-        actual_last_val = float(last_3d_element.GetValue())
-        self.assertAlmostEqual(actual_last_val, 2.71828, places=5, 
-                               msg=f"Expected ~2.71828, got {actual_last_val}")
-        # ---------------------------------------------------------
-        # 7D Array 
-        # ---------------------------------------------------------
-        self.expect_var_path("arr_7d", type="INTEGER(KIND=1)(2, 2, 2, 2, 2, 2, 2)")
-        
-        # Method 1: Deep drill-down using standard path brackets
-        # Fetches arr_7d(2, 2, 2, 2, 2, 2, 2) in a single clean string
-        self.expect_var_path(
-            "arr_7d[2][2][2][2][2][2][2]",
-            type="INTEGER(KIND=1)",
-            value="127"
+        self.assertTrue(first_element.IsValid())
+        self.assertAlmostEqual(float(first_element.GetValue()), 3.14159, places=5)
+
+        last_3d_element = (
+            arr_3d_mixed.GetChildAtIndex(2).GetChildAtIndex(2).GetChildAtIndex(1)
         )
-        self.expect_var_path(
-            "arr_7d[1][1][1][1][1][1][1]",
-            type="INTEGER(KIND=1)",
-            value="1"
+        self.assertTrue(last_3d_element.IsValid())
+        self.assertAlmostEqual(float(last_3d_element.GetValue()), 2.71828, places=5)
+        
+        self.expect(
+            "frame variable arr_3d_mixed[0][-2]",
+            substrs=[
+                "(REAL(KIND=8)(4:5))",
+                "arr_3d_mixed[0][-2] = ([4] = 4.0999999999999996, [5] = 13.1)",
+            ],
+        )
+        self.expect(
+            "frame variable arr_3d_mixed[0][-2][5]",
+            substrs=["(REAL(KIND=8))", "arr_3d_mixed[0][-2][5] = 13.1"],
         )

@@ -391,7 +391,7 @@ llvm::Expected<CompilerType> TypeSystemFortran::GetChildCompilerTypeAtIndex(
   // negative indices.
   if (!fortran_type->IsStar()) {
     num_elements = old_dimensions.front().GetElementCount();
-    if (idx >= num_elements && num_elements > 0)
+    if (idx >= num_elements || num_elements == 0)
       return CompilerType();
   }
   int32_t real_idx = idx + lb;

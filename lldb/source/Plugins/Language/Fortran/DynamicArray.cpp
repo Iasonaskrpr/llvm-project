@@ -281,7 +281,7 @@ lldb::ChildCacheState DynamicArraySyntheticFrontEnd::Update() {
   uint64_t total_array_size = 0;
 
   for (auto &dim : array_info.dimensions) {
-    int64_t count = 0;
+    int64_t count = -1;
     if (const auto *s_val = std::get_if<int64_t>(&dim.element_count))
       count = *s_val;
     int64_t lb = 1;
@@ -292,11 +292,13 @@ lldb::ChildCacheState DynamicArraySyntheticFrontEnd::Update() {
     if (const auto *u_val = std::get_if<int64_t>(&dim.upper_bound))
       ub = *u_val;
 
-    if (count == 0) {
+    if (count == -1) {
       if (ub >= lb)
         count = ub - lb + 1;
       else if (array_info.is_star && &dim == &array_info.dimensions.back())
         count = 1;
+      else
+        count = 0;
     } else
       // If we have count but upper bound was missing or 0, calculate it
       if (count > 0 && ub == -1)
