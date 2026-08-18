@@ -41,8 +41,11 @@ struct FortranArrayMetadata {
   bool is_dynamic = false;
   bool is_star = false;
   bool is_auto = false;
+  bool is_assumed_rank = false;
+  bool is_scalar = false;
   DWARFExpressionList allocated_exp;
   DWARFExpressionList data_location_exp;
+  DWARFExpressionList rank_exp;
 };
 
 /// A simplified internal representation of a Fortran type.
@@ -278,19 +281,24 @@ public:
                const llvm::SmallVectorImpl<ArrayShape> &dimensions,
                ConstString array_type_name, uint64_t total_array_size,
                bool is_allocatable, bool is_dynamic, bool is_star, bool is_auto,
-               uint64_t total_elements, DWARFExpressionList allocated_exp,
-               DWARFExpressionList data_location_exp)
+               bool is_assumed_rank, uint64_t total_elements,
+               DWARFExpressionList allocated_exp,
+               DWARFExpressionList data_location_exp,
+               DWARFExpressionList rank_exp)
       : FortranType(TypeKind::KIND_ARRAY, total_array_size, array_type_name),
         m_element_type(element_type),
         m_dimensions(dimensions.begin(), dimensions.end()),
         m_is_allocatable(is_allocatable), m_is_dynamic(is_dynamic),
         m_is_star(is_star), m_is_auto(is_auto),
-        m_total_elements(total_elements), m_allocated_exp(allocated_exp),
-        m_data_location_exp(data_location_exp) {}
+        m_is_assumed_rank(is_assumed_rank), m_total_elements(total_elements),
+        m_allocated_exp(allocated_exp), m_data_location_exp(data_location_exp),
+        m_rank_exp(rank_exp) {}
   CompilerType GetElementType() const { return m_element_type; }
   uint64_t GetTotalElements() const { return m_total_elements; }
   bool IsAllocatable() const { return m_is_allocatable; }
   bool IsDynamic() const { return m_is_dynamic; }
+  bool IsScalar() const { return m_is_scalar; }
+  void SetScalar(bool is_scalar) { m_is_scalar = is_scalar; }
   uint64_t GetElementByteSize() const {
     auto byte_size_or_err = m_element_type.GetByteSize(nullptr);
     // TODO: Change this to returning an error, and change return type to
@@ -303,11 +311,13 @@ public:
   size_t GetRank() const { return m_dimensions.size(); }
   llvm::ArrayRef<ArrayShape> GetDimensions() const { return m_dimensions; }
   bool IsStar() const { return m_is_star; }
+  bool IsAssumedRank() const { return m_is_assumed_rank; }
 
   DWARFExpressionList GetAllocatedExpression() const { return m_allocated_exp; }
   DWARFExpressionList GetDataLocationExpression() const {
     return m_data_location_exp;
   }
+  DWARFExpressionList GetRankExpression() const { return m_rank_exp; }
   void Profile(llvm::FoldingSetNodeID &id) const {
     Profile(id, m_element_type, m_dimensions, m_is_allocatable, m_is_dynamic,
             m_allocated_exp, m_data_location_exp);
@@ -339,9 +349,12 @@ private:
   bool m_is_dynamic;
   bool m_is_star;
   bool m_is_auto;
+  bool m_is_assumed_rank;
+  bool m_is_scalar = false;
   uint64_t m_total_elements;
   DWARFExpressionList m_allocated_exp;
   DWARFExpressionList m_data_location_exp;
+  DWARFExpressionList m_rank_exp;
 };
 
 // TODO: Calculate correct pointer size
@@ -366,13 +379,19 @@ private:
 
 inline ConstString CreateArrayTypeName(const CompilerType &element_type,
                                        const llvm::ArrayRef<ArrayShape> shapes,
-                                       bool is_allocatable, bool is_star) {
+                                       bool is_allocatable, bool is_star,
+                                       bool is_assumed_rank) {
 
   std::string name_buffer;
   llvm::raw_string_ostream name_stream(name_buffer);
 
   name_stream << element_type.GetTypeName().AsCString(nullptr) << "(";
   size_t rank = shapes.size();
+  if (is_assumed_rank) {
+    name_stream << "..)";
+    name_stream.flush();
+    return ConstString(name_buffer.c_str());
+  }
 
   for (size_t idx = 0; idx < rank; ++idx) {
     if (idx > 0)

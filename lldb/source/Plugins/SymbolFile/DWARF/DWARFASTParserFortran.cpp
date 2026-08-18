@@ -67,6 +67,11 @@ FortranArrayMetadata ParseArray(const DWARFDIE &parent_die,
       array_info.allocated_exp =
           GetDWARFExpression(parent_die, form_value, parent_module);
       break;
+    case DW_AT_rank:
+      array_info.rank_exp =
+          GetDWARFExpression(parent_die, form_value, parent_module);
+      array_info.is_assumed_rank = true;
+      break;
     default:
       break;
     }
@@ -74,13 +79,16 @@ FortranArrayMetadata ParseArray(const DWARFDIE &parent_die,
   for (DWARFDIE die : parent_die.children()) {
     const dw_tag_t tag = die.Tag();
     ModuleSP module(die.GetModule());
-
-    if (tag != DW_TAG_subrange_type)
+    // Both DW_TAG_subrange_type and DW_TAG_generic_subrange have the same
+    // fields, the handling is done by the synthetic children provider.
+    if (tag != DW_TAG_subrange_type && tag != DW_TAG_generic_subrange)
       continue;
+    if (tag == DW_TAG_generic_subrange)
+      array_info.is_assumed_rank = true;
     // If a subrange of an array is a star meaning we can't infer how many
     // elements it has it is always the last dimension and is identified by not
     // having a DW_AT_count attribute, if this at the end is true then it is a
-    // star and needs to be treated as such
+    // star and needs to be treated as such.
     array_info.is_star = true;
     DWARFAttributes attributes = die.GetAttributes();
     if (attributes.Size() == 0)

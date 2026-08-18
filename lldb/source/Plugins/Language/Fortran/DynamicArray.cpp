@@ -41,6 +41,11 @@ public:
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
+  llvm::Expected<FortranDimension>
+  ProcessArrayDimension(ArrayShape *dimension, Value *idx,
+                        ExecutionContext &exe_ctx, Value *object_address_val,
+                        addr_t loclist_base_load_addr);
+
 private:
   CompilerType m_element_type;
   CompilerType m_array_type;
@@ -56,6 +61,118 @@ DynamicArraySyntheticFrontEnd::DynamicArraySyntheticFrontEnd(
     Update();
 }
 
+static llvm::Expected<int64_t>
+EvaluateDWARFExpression(const DWARFExpressionList &exp,
+                        ExecutionContext &exe_ctx, Value *object_address_val,
+                        Value *initial_value, addr_t loclist_base_load_addr,
+                        bool &success) {
+  if (exp.IsValid()) {
+    llvm::Expected<Value> val_or_err =
+        exp.Evaluate(&exe_ctx, nullptr, loclist_base_load_addr, initial_value,
+                     object_address_val);
+    if (!val_or_err)
+      return val_or_err.takeError();
+
+    Value val = *val_or_err;
+    success = true;
+    return val.ResolveValue(&exe_ctx).SLongLong(0);
+  }
+  success = false;
+  return 0;
+}
+
+static int64_t EvaluateVariable(const plugin::dwarf::DWARFDIE &var,
+                                ExecutionContext &exe_ctx, int64_t fallback) {
+  if (var.IsValid()) {
+    if (auto frame = exe_ctx.GetFrameSP()) {
+      // Fortran generates hidden variables that start with a dot. DIL
+      // rejects variables starting with a dot, so we have to find the
+      // variable manually.
+      auto valobj_sp = frame->FindVariable(ConstString(var.GetName()));
+
+      if (valobj_sp)
+        return valobj_sp->GetValueAsSigned(0);
+    }
+  }
+  return fallback;
+}
+
+llvm::Expected<FortranDimension>
+DynamicArraySyntheticFrontEnd::ProcessArrayDimension(
+    ArrayShape *dimension, Value *idx, ExecutionContext &exe_ctx,
+    Value *object_address_val, addr_t loclist_base_load_addr) {
+  FortranDimension dimension_info;
+  bool success;
+  int64_t lb = INT64_MAX;
+  ArrayBound l_bound = dimension->GetLowerBound();
+
+  if (l_bound.IsBoundKnown())
+    lb = l_bound.GetBound();
+
+  auto lb_or_err = EvaluateDWARFExpression(dimension->GetLowerBoundExpression(),
+                                           exe_ctx, object_address_val, idx,
+                                           loclist_base_load_addr, success);
+
+  if (!lb_or_err)
+    return lb_or_err.takeError();
+
+  if (success)
+    lb = *lb_or_err;
+  else
+    lb = EvaluateVariable(dimension->GetLowerBoundDIE(), exe_ctx, lb);
+
+  dimension_info.lower_bound = lb;
+
+  // TODO: Handle cases where we only upper and lower bound
+  auto element_count_or_err = EvaluateDWARFExpression(
+      dimension->GetElementCountExpression(), exe_ctx, object_address_val, idx,
+      loclist_base_load_addr, success);
+
+  if (!element_count_or_err)
+    return element_count_or_err.takeError();
+  if (success)
+    dimension_info.element_count = *element_count_or_err;
+  else
+    dimension_info.element_count = EvaluateVariable(
+        dimension->GetElementCountDIE(), exe_ctx, dimension->GetElementCount());
+
+  int64_t ub = INT64_MAX;
+  ArrayBound u_bound = dimension->GetUpperBound();
+  if (u_bound.IsBoundKnown())
+    ub = u_bound.GetBound();
+  auto ub_or_err = EvaluateDWARFExpression(dimension->GetUpperBoundExpression(),
+                                           exe_ctx, object_address_val, idx,
+                                           loclist_base_load_addr, success);
+  if (!ub_or_err)
+    return ub_or_err.takeError();
+  if (success)
+    ub = *ub_or_err;
+  else
+    ub = EvaluateVariable(dimension->GetUpperBoundDIE(), exe_ctx, ub);
+
+  if (ub == INT64_MAX) {
+    int64_t count = *element_count_or_err;
+    int64_t lower = *lb_or_err;
+    ub = lower + (count > 0 ? count - 1 : 0);
+  }
+  dimension_info.upper_bound = ub;
+
+  auto byte_stride_or_err = EvaluateDWARFExpression(
+      dimension->GetByteStrideExpression(), exe_ctx, object_address_val, idx,
+      loclist_base_load_addr, success);
+
+  if (!byte_stride_or_err)
+    return byte_stride_or_err.takeError();
+
+  if (success)
+    dimension_info.byte_stride = *byte_stride_or_err;
+  else
+    dimension_info.byte_stride = EvaluateVariable(
+        dimension->GetByteStrideDIE(), exe_ctx, dimension->GetByteStride());
+
+  return dimension_info;
+}
+
 // TODO: Delete the synthetic types when a new one is created.
 lldb::ChildCacheState DynamicArraySyntheticFrontEnd::Update() {
   m_allocated = false;
@@ -69,9 +186,9 @@ lldb::ChildCacheState DynamicArraySyntheticFrontEnd::Update() {
     return lldb::ChildCacheState::eRefetch;
   m_ast_sp = ast_sp;
   FortranArray *array_type = static_cast<FortranArray *>(raw_type);
-  if (!array_type) {
+  if (!array_type)
     return lldb::ChildCacheState::eRefetch;
-  }
+
   m_element_type = array_type->GetElementType();
   if (!array_type->IsDynamic() && !array_type->IsAuto()) {
     m_allocated = true;
@@ -106,44 +223,35 @@ lldb::ChildCacheState DynamicArraySyntheticFrontEnd::Update() {
   Value object_address_val;
   object_address_val.SetValueType(Value::ValueType::LoadAddress);
   object_address_val.GetScalar() = obj_load_addr;
-
-  DWARFExpressionList allocated_exp = array_type->GetAllocatedExpression();
-  DWARFExpressionList data_location_exp =
-      array_type->GetDataLocationExpression();
+  bool success;
   // Some arrays may need to be evaluated at runtime but are always allocated.
-  if (allocated_exp.IsValid()) {
-    llvm::Expected<Value> allocated_val_or_err =
-        allocated_exp.Evaluate(&exe_ctx, nullptr, loclist_base_load_addr,
-                               nullptr, &object_address_val);
-    if (!allocated_val_or_err) {
-      llvm::consumeError(allocated_val_or_err.takeError());
-      return lldb::ChildCacheState::eRefetch;
-    }
-
-    Value allocated_val = *allocated_val_or_err;
-    if (allocated_val.ResolveValue(&exe_ctx).IsZero())
-      return lldb::ChildCacheState::eRefetch;
+  auto allocated_val_or_err = EvaluateDWARFExpression(
+      array_type->GetAllocatedExpression(), exe_ctx, &object_address_val,
+      nullptr, loclist_base_load_addr, success);
+  if (!allocated_val_or_err) {
+    llvm::consumeError(allocated_val_or_err.takeError());
+    return lldb::ChildCacheState::eRefetch;
   }
 
+  if (success && *allocated_val_or_err == 0)
+    return lldb::ChildCacheState::eRefetch;
+
   m_allocated = true;
-  if (data_location_exp.IsValid()) {
-    llvm::Expected<Value> array_addr_or_err =
-        data_location_exp.Evaluate(&exe_ctx, nullptr, loclist_base_load_addr,
-                                   nullptr, &object_address_val);
-    if (!array_addr_or_err) {
-      llvm::consumeError(array_addr_or_err.takeError());
-      return lldb::ChildCacheState::eRefetch;
-    }
 
-    Value array_addr = *array_addr_or_err;
+  auto array_addr_or_err = EvaluateDWARFExpression(
+      array_type->GetDataLocationExpression(), exe_ctx, &object_address_val,
+      nullptr, loclist_base_load_addr, success);
+  if (!array_addr_or_err) {
+    llvm::consumeError(array_addr_or_err.takeError());
+    return lldb::ChildCacheState::eRefetch;
+  }
 
-    m_array_addr =
-        array_addr.ResolveValue(&exe_ctx).ULongLong(LLDB_INVALID_ADDRESS);
-  } else {
+  if (success)
+    m_array_addr = *array_addr_or_err;
+  else {
     m_array_addr = m_backend.GetValueAsUnsigned(LLDB_INVALID_ADDRESS);
-    if (m_array_addr == LLDB_INVALID_ADDRESS) {
+    if (m_array_addr == LLDB_INVALID_ADDRESS)
       m_array_addr = m_backend.GetLoadAddress();
-    }
   }
 
   llvm::ArrayRef<ArrayShape> dimensions = array_type->GetDimensions();
@@ -152,131 +260,55 @@ lldb::ChildCacheState DynamicArraySyntheticFrontEnd::Update() {
   array_info.is_allocatable = array_type->IsAllocatable();
   array_info.is_dynamic = false;
   array_info.is_star = array_type->IsStar();
-  for (ArrayShape dimension : dimensions) {
-    FortranDimension dimension_info;
-    DWARFExpressionList lower_bound_exp = dimension.GetLowerBoundExpression();
-    DWARFExpressionList upper_bound_exp = dimension.GetUpperBoundExpression();
-    DWARFExpressionList element_count_exp =
-        dimension.GetElementCountExpression();
-    DWARFExpressionList byte_stride_exp = dimension.GetByteStrideExpression();
-    plugin::dwarf::DWARFDIE lower_bound_var = dimension.GetLowerBoundDIE();
-    plugin::dwarf::DWARFDIE upper_bound_var = dimension.GetUpperBoundDIE();
-    plugin::dwarf::DWARFDIE element_count_var = dimension.GetElementCountDIE();
-    plugin::dwarf::DWARFDIE byte_stride_var = dimension.GetByteStrideDIE();
-    if (lower_bound_exp.IsValid()) {
-      llvm::Expected<Value> lower_bound_or_err =
-          lower_bound_exp.Evaluate(&exe_ctx, nullptr, loclist_base_load_addr,
-                                   nullptr, &object_address_val);
-      if (!lower_bound_or_err) {
-        llvm::consumeError(lower_bound_or_err.takeError());
+  if (array_type->IsAssumedRank()) {
+    // Assumed rank arrays have only one, generic, subrange. We get each
+    // dimension by the same expression with a different initial value.
+    int64_t rank;
+    ArrayShape dimension = dimensions.front();
+    bool success;
+    auto rank_or_err = EvaluateDWARFExpression(
+        array_type->GetRankExpression(), exe_ctx, &object_address_val, nullptr,
+        loclist_base_load_addr, success);
+    if (!rank_or_err) {
+      llvm::consumeError(rank_or_err.takeError());
+      return lldb::ChildCacheState::eRefetch;
+    }
+    if (success)
+      rank = *rank_or_err;
+    else
+      return lldb::ChildCacheState::eRefetch;
+    // Arrays with a rank equal to 0 are just scalars and we should
+    // treat them differently than normal arrays.
+    if (rank == 0)
+      array_info.is_scalar = true;
+
+    for (int64_t idx = 0; idx < rank; idx++) {
+      Value idx_val{idx};
+      auto dimension_info_or_err =
+          ProcessArrayDimension(&dimension, &idx_val, exe_ctx,
+                                &object_address_val, loclist_base_load_addr);
+      if (!dimension_info_or_err) {
+        llvm::consumeError(dimension_info_or_err.takeError());
         return lldb::ChildCacheState::eRefetch;
       }
 
-      Value lower_bound = *lower_bound_or_err;
-
-      dimension_info.lower_bound =
-          lower_bound.ResolveValue(&exe_ctx).SLongLong(0);
-    } else if (lower_bound_var.IsValid()) {
-      if (auto frame = exe_ctx.GetFrameSP()) {
-        // Fortran generates hidden variables that start with a dot. DIL
-        // rejects variables starting with a dot, so we have to find the
-        // variable manually.
-        auto valobj_sp =
-            frame->FindVariable(ConstString(lower_bound_var.GetName()));
-
-        if (valobj_sp)
-          dimension_info.lower_bound = valobj_sp->GetValueAsSigned(0);
-      }
-    } else
-      dimension_info.lower_bound = dimension.GetLowerBound().GetBound();
-
-    // TODO: Handle cases where we only upper and lower bound
-    if (element_count_exp.IsValid()) {
-      llvm::Expected<Value> element_count_or_err =
-          element_count_exp.Evaluate(&exe_ctx, nullptr, loclist_base_load_addr,
-                                     nullptr, &object_address_val);
-      if (!element_count_or_err) {
-        llvm::consumeError(element_count_or_err.takeError());
-        return lldb::ChildCacheState::eRefetch;
-      }
-      Value element_count = *element_count_or_err;
-      dimension_info.element_count =
-          element_count.ResolveValue(&exe_ctx).SLongLong(0);
-    } else if (element_count_var.IsValid()) {
-      if (auto frame = exe_ctx.GetFrameSP()) {
-        // Fortran generates hidden variables that start with a dot. DIL
-        // rejects variables starting with a dot, so we have to find the
-        // variable manually.
-        auto valobj_sp =
-            frame->FindVariable(ConstString(element_count_var.GetName()));
-
-        if (valobj_sp)
-          dimension_info.element_count = valobj_sp->GetValueAsSigned(0);
-      }
-    } else
-      dimension_info.element_count = dimension.GetElementCount();
-
-    if (upper_bound_exp.IsValid()) {
-      llvm::Expected<Value> upper_bound_or_err =
-          upper_bound_exp.Evaluate(&exe_ctx, nullptr, loclist_base_load_addr,
-                                   nullptr, &object_address_val);
-      if (!upper_bound_or_err) {
-        llvm::consumeError(upper_bound_or_err.takeError());
-        return lldb::ChildCacheState::eRefetch;
-      }
-
-      Value upper_bound = *upper_bound_or_err;
-      dimension_info.upper_bound =
-          upper_bound.ResolveValue(&exe_ctx).SLongLong(0);
-    } else if (upper_bound_var.IsValid()) {
-      if (auto frame = exe_ctx.GetFrameSP()) {
-        // Fortran generates hidden variables that start with a dot. DIL
-        // rejects variables starting with a dot, so we have to find the
-        // variable manually.
-        auto valobj_sp =
-            frame->FindVariable(ConstString(upper_bound_var.GetName()));
-
-        if (valobj_sp)
-          dimension_info.upper_bound = valobj_sp->GetValueAsSigned(0);
-      }
-    } else if (dimension.GetUpperBound().IsBoundKnown())
-      dimension_info.upper_bound = dimension.GetUpperBound().GetBound();
-    else {
-      int64_t count = std::get<int64_t>(dimension_info.element_count);
-      dimension_info.upper_bound =
-          std::get<int64_t>(dimension_info.lower_bound) +
-          (count > 0 ? count - 1 : 0);
+      array_info.dimensions.push_back(*dimension_info_or_err);
     }
 
-    if (byte_stride_exp.IsValid()) {
-      llvm::Expected<Value> byte_stride_or_err =
-          byte_stride_exp.Evaluate(&exe_ctx, nullptr, loclist_base_load_addr,
-                                   nullptr, &object_address_val);
-      if (!byte_stride_or_err) {
-        llvm::consumeError(byte_stride_or_err.takeError());
+  } else {
+    for (ArrayShape dimension : dimensions) {
+      auto dimension_info_or_err =
+          ProcessArrayDimension(&dimension, nullptr, exe_ctx,
+                                &object_address_val, loclist_base_load_addr);
+      if (!dimension_info_or_err) {
+        llvm::consumeError(dimension_info_or_err.takeError());
         return lldb::ChildCacheState::eRefetch;
       }
 
-      Value byte_stride = *byte_stride_or_err;
-      dimension_info.byte_stride =
-          byte_stride.ResolveValue(&exe_ctx).SLongLong(0);
-    } else if (byte_stride_var.IsValid()) {
-      if (auto frame = exe_ctx.GetFrameSP()) {
-        // Fortran generates hidden variables that start with a dot. DIL
-        // rejects variables starting with a dot, so we have to find the
-        // variable manually.
-        auto valobj_sp =
-            frame->FindVariable(ConstString(byte_stride_var.GetName()));
-
-        if (valobj_sp)
-          dimension_info.byte_stride = valobj_sp->GetValueAsSigned(0);
-      }
-    } else {
-      dimension_info.byte_stride = dimension.GetByteStride();
+      array_info.dimensions.push_back(*dimension_info_or_err);
     }
-
-    array_info.dimensions.push_back(dimension_info);
   }
+
   uint64_t total_elements = 1;
   uint64_t total_array_size = 0;
 
@@ -331,14 +363,27 @@ lldb::ChildCacheState DynamicArraySyntheticFrontEnd::Update() {
 }
 
 llvm::Expected<uint32_t> DynamicArraySyntheticFrontEnd::CalculateNumChildren() {
+  if (!m_allocated)
+    return 0;
+
   lldb::opaque_compiler_type_t raw_type = m_array_type.GetOpaqueQualType();
   if (!raw_type)
     return 0;
-  FortranArray *array_type = static_cast<FortranArray *>(raw_type);
+
+  FortranType *super_type = static_cast<FortranType *>(raw_type);
+
+  // If CreateArrayType returned a scalar element type, it's not KIND_ARRAY.
+  // We have exactly 1 child (the scalar value itself).
+  if (super_type->GetKind() != FortranType::KIND_ARRAY)
+    return 1;
+
+  FortranArray *array_type = static_cast<FortranArray *>(super_type);
   if (!array_type || array_type->IsStar())
     return 0;
 
-  ArrayShape first_dimension = array_type->GetDimensions().front();
+  if (array_type->GetDimensions().empty())
+    return 0;
+  const ArrayShape &first_dimension = array_type->GetDimensions().front();
   return first_dimension.GetElementCount();
 }
 
@@ -346,6 +391,8 @@ lldb::ValueObjectSP
 DynamicArraySyntheticFrontEnd::GetChildAtIndex(uint32_t idx) {
   if (!m_allocated)
     return ValueObjectSP();
+
+  ExecutionContext exe_ctx(m_backend.GetExecutionContextRef());
   lldb::opaque_compiler_type_t raw_type = m_array_type.GetOpaqueQualType();
 
   if (!raw_type)
@@ -353,14 +400,27 @@ DynamicArraySyntheticFrontEnd::GetChildAtIndex(uint32_t idx) {
 
   FortranType *super_type = static_cast<FortranType *>(raw_type);
 
-  if (super_type->GetKind() != FortranType::KIND_ARRAY)
-    return ValueObjectSP();
+  // Assumed-rank arrays can be Scalar objects with a rank of 0, a workaround
+  // is to have 1 child, which will be the value of the object itself.
+  if (super_type->GetKind() != FortranType::KIND_ARRAY) {
+    if (idx != 0)
+      return ValueObjectSP();
+
+    lldb::ValueObjectSP child_sp = CreateChildValueObjectFromAddress(
+        "value", m_array_addr, exe_ctx, m_element_type, false);
+
+    if (child_sp) {
+      child_sp->GetValue().SetValueType(Value::ValueType::LoadAddress);
+      child_sp->GetValue().GetScalar() = m_array_addr;
+    }
+    return child_sp;
+  }
 
   FortranArray *fortran_type = static_cast<FortranArray *>(super_type);
 
   if (!fortran_type)
     return ValueObjectSP();
-  ExecutionContext exe_ctx(m_backend.GetExecutionContextRef());
+
   bool omit_empty_base_classes = true;
   bool ignore_array_bounds = false;
   uint32_t child_byte_size = 0;
@@ -373,9 +433,13 @@ DynamicArraySyntheticFrontEnd::GetChildAtIndex(uint32_t idx) {
   const bool transparent_pointers = true;
   std::string child_name;
   llvm::ArrayRef<ArrayShape> old_dimensions = fortran_type->GetDimensions();
+
+  if (old_dimensions.empty())
+    return ValueObjectSP();
+
   uint64_t num_elements = old_dimensions.front().GetElementCount();
 
-  if (idx > num_elements)
+  if (idx >= num_elements)
     return ValueObjectSP();
   llvm::Expected<CompilerType> child_type_orr_err =
       m_ast_sp->GetChildCompilerTypeAtIndex(

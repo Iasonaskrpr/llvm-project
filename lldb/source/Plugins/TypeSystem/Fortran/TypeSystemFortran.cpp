@@ -221,7 +221,10 @@ CompilerType TypeSystemFortran::CreateType(uint32_t kind, uint64_t bitsize,
 CompilerType TypeSystemFortran::CreateArrayType(FortranArrayMetadata array_info,
                                                 uint64_t total_array_size,
                                                 uint64_t total_elements) {
-
+  // Assumed-rank types can be scalar, with a rank of 0, meaning they are
+  // technically scalars. If this is the case we do not need to do anything.
+  if (array_info.is_scalar)
+    return array_info.element_type;
   size_t rank = array_info.dimensions.size();
   llvm::SmallVector<ArrayShape, 2> array_shapes;
   ConstString type_name;
@@ -339,15 +342,16 @@ CompilerType TypeSystemFortran::CreateArrayType(FortranArrayMetadata array_info,
   if (array_type)
     return CompilerType(weak_from_this(), (void *)array_type);
 
-  ConstString array_type_name =
-      CreateArrayTypeName(array_info.element_type, array_shapes,
-                          array_info.is_allocatable, array_info.is_star);
+  ConstString array_type_name = CreateArrayTypeName(
+      array_info.element_type, array_shapes, array_info.is_allocatable,
+      array_info.is_star, array_info.is_assumed_rank);
 
   auto new_type_up = std::make_unique<FortranArray>(
       array_info.element_type, array_shapes, array_type_name, total_array_size,
       array_info.is_allocatable, array_info.is_dynamic, array_info.is_star,
-      array_info.is_auto, total_elements, array_info.allocated_exp,
-      array_info.data_location_exp);
+      array_info.is_auto, array_info.is_assumed_rank, total_elements,
+      array_info.allocated_exp, array_info.data_location_exp,
+      array_info.rank_exp);
 
   array_type = new_type_up.get();
   m_arrays.InsertNode(array_type, insert_pos);
@@ -437,14 +441,14 @@ llvm::Expected<CompilerType> TypeSystemFortran::GetChildCompilerTypeAtIndex(
     if (array_type)
       return CompilerType(weak_from_this(), (void *)array_type);
 
-    ConstString type_name =
-        CreateArrayTypeName(fortran_type->GetElementType(), new_dimensions,
-                            is_allocatable, is_star);
+    ConstString type_name = CreateArrayTypeName(
+        fortran_type->GetElementType(), new_dimensions, is_allocatable, is_star,
+        fortran_type->IsAssumedRank());
     auto new_type_up = std::make_unique<FortranArray>(
         fortran_type->GetElementType(), new_dimensions, type_name,
         child_byte_size, false, false, fortran_type->IsStar(),
-        fortran_type->IsAuto(), new_total_elements, DWARFExpressionList(),
-        DWARFExpressionList());
+        fortran_type->IsAuto(), false, new_total_elements,
+        DWARFExpressionList(), DWARFExpressionList(), DWARFExpressionList());
     array_type = new_type_up.get();
     m_arrays.InsertNode(array_type, insert_pos);
     m_types.push_back(std::move(new_type_up));
