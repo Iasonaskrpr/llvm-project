@@ -577,7 +577,12 @@ ValueObject *ValueObject::CreateSyntheticArrayMember(size_t idx) {
   }
 
   if (child_compiler_type_or_err->IsValid()) {
-    child_byte_offset += child_byte_size * idx;
+    // Arrays in some languages can have strides between elements.
+    int64_t array_byte_stride = GetCompilerType().GetArrayByteStride();
+    if (array_byte_stride > 0)
+      child_byte_offset += array_byte_stride * idx;
+    else
+      child_byte_offset += child_byte_size * idx;
 
     return new ValueObjectChild(
         *this, *child_compiler_type_or_err, ConstString(child_name),

@@ -264,6 +264,19 @@ public:
   virtual CompilerType GetArrayType(lldb::opaque_compiler_type_t type,
                                     uint64_t size);
 
+  virtual int64_t GetArrayLowerBound(lldb::opaque_compiler_type_t type) {
+    return 0;
+  }
+
+  virtual int64_t GetArrayByteStride(lldb::opaque_compiler_type_t type) {
+    return 0;
+  }
+
+  virtual CompilerType GetExplicitArrayType(lldb::opaque_compiler_type_t type,
+                                            lldb::user_id_t valobj_id) {
+    return CompilerType();
+  }
+
   virtual CompilerType GetCanonicalType(lldb::opaque_compiler_type_t type) = 0;
 
   virtual CompilerType

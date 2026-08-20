@@ -1082,6 +1082,23 @@ Interpreter::Visit(const MemberOfNode &node) {
       m_expr, errMsg, node.GetLocation(), node.GetFieldName().size());
 }
 
+static int64_t ExtractArrayLowerBound(lldb::ValueObjectSP base_valobj) {
+  if (!base_valobj)
+    return 0;
+
+  lldb::ValueObjectSP synthetic = base_valobj->GetSyntheticValue();
+  if (!synthetic)
+    synthetic = base_valobj;
+  synthetic->UpdateValueIfNeeded();
+  CompilerType explicit_type =
+      base_valobj->GetCompilerType().GetExplicitArrayType(base_valobj->GetID());
+
+  if (!explicit_type)
+    explicit_type = base_valobj->GetCompilerType();
+
+  return explicit_type.GetArrayLowerBound();
+}
+
 llvm::Expected<lldb::ValueObjectSP>
 Interpreter::Visit(const ArraySubscriptNode &node) {
   auto idx_or_err = EvaluateAndDereference(node.GetIndex());
@@ -1095,7 +1112,7 @@ Interpreter::Visit(const ArraySubscriptNode &node) {
   }
 
   StreamString var_expr_path_strm;
-  uint64_t child_idx = idx->GetValueAsUnsigned(0);
+  int64_t child_idx = idx->GetValueAsSigned(0);
   lldb::ValueObjectSP child_valobj_sp;
 
   auto base_or_err = Evaluate(node.GetBase());
@@ -1170,9 +1187,20 @@ Interpreter::Visit(const ArraySubscriptNode &node) {
                                                   node.GetLocation());
     }
   } else if (base_type.IsArrayType(nullptr, nullptr, &is_incomplete_array)) {
-    child_valobj_sp = base->GetChildAtIndex(child_idx);
-    if (!child_valobj_sp && (is_incomplete_array || m_use_synthetic))
-      child_valobj_sp = base->GetSyntheticArrayMember(child_idx, true);
+    // Some languages can have arrays with custom bounds, we normalize
+    // the index by which we get the children to start at 0.
+    int64_t lb = ExtractArrayLowerBound(base);
+    int64_t real_idx = child_idx - lb;
+    child_valobj_sp = base->GetChildAtIndex(real_idx);
+    if (!child_valobj_sp && (is_incomplete_array || m_use_synthetic)) {
+      child_valobj_sp = base->GetSyntheticArrayMember(real_idx, true);
+      // If arrays have custom bounds GetSyntheticArrayMember will assign
+      // the wrong name.
+      if (lb != 0 && child_valobj_sp) {
+        std::string child_name = llvm::formatv("[{0}]", child_idx);
+        child_valobj_sp->SetName(child_name);
+      }
+    }
     if (!child_valobj_sp) {
       std::string err_msg = llvm::formatv(
           "array index {0} is not valid for \"({1}) {2}\"", child_idx,
