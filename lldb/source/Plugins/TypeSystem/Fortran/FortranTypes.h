@@ -64,7 +64,7 @@ public:
   };
   FortranType(int32_t kind, uint64_t bitsize, const ConstString &name)
       : m_kind(kind), m_bitsize(bitsize), m_type_name(name) {}
-  virtual ~FortranType() = default;
+  virtual ~FortranType();
   int GetKind() const { return m_kind; }
   uint64_t GetBitSize() const { return m_bitsize; }
   ConstString GetName() const { return m_type_name; }
@@ -88,10 +88,8 @@ private:
 class FortranFunction : public FortranType {
 public:
   FortranFunction(ConstString func_name,
-                  const llvm::SmallVectorImpl<CompilerType> &parameters)
-      : FortranType(FortranType::KIND_FUNCTION, 0, func_name) {
-    m_parameters.assign(parameters.begin(), parameters.end());
-  }
+                  const llvm::SmallVectorImpl<CompilerType> &parameters);
+
   llvm::ArrayRef<CompilerType> GetParameters() const { return m_parameters; }
   size_t GetNumberOfParameters() const { return m_parameters.size(); }
 
@@ -284,29 +282,15 @@ public:
                bool is_assumed_rank, uint64_t total_elements,
                DWARFExpressionList allocated_exp,
                DWARFExpressionList data_location_exp,
-               DWARFExpressionList rank_exp)
-      : FortranType(TypeKind::KIND_ARRAY, total_array_size, array_type_name),
-        m_element_type(element_type),
-        m_dimensions(dimensions.begin(), dimensions.end()),
-        m_is_allocatable(is_allocatable), m_is_dynamic(is_dynamic),
-        m_is_star(is_star), m_is_auto(is_auto),
-        m_is_assumed_rank(is_assumed_rank), m_total_elements(total_elements),
-        m_allocated_exp(allocated_exp), m_data_location_exp(data_location_exp),
-        m_rank_exp(rank_exp) {}
+               DWARFExpressionList rank_exp);
+
   CompilerType GetElementType() const { return m_element_type; }
   uint64_t GetTotalElements() const { return m_total_elements; }
   bool IsAllocatable() const { return m_is_allocatable; }
   bool IsDynamic() const { return m_is_dynamic; }
   bool IsScalar() const { return m_is_scalar; }
   void SetScalar(bool is_scalar) { m_is_scalar = is_scalar; }
-  uint64_t GetElementByteSize() const {
-    auto byte_size_or_err = m_element_type.GetByteSize(nullptr);
-    // TODO: Change this to returning an error, and change return type to
-    // expected<uint64_t>
-    if (!byte_size_or_err)
-      return 0;
-    return *byte_size_or_err;
-  }
+  uint64_t GetElementByteSize() const;
 
   size_t GetRank() const { return m_dimensions.size(); }
   llvm::ArrayRef<ArrayShape> GetDimensions() const { return m_dimensions; }
@@ -377,54 +361,10 @@ private:
   FortranType *m_pointee;
 };
 
-inline ConstString CreateArrayTypeName(const CompilerType &element_type,
-                                       const llvm::ArrayRef<ArrayShape> shapes,
-                                       bool is_allocatable, bool is_star,
-                                       bool is_assumed_rank) {
-
-  std::string name_buffer;
-  llvm::raw_string_ostream name_stream(name_buffer);
-
-  name_stream << element_type.GetTypeName().AsCString(nullptr) << "(";
-  size_t rank = shapes.size();
-  if (is_assumed_rank) {
-    name_stream << "..)";
-    name_stream.flush();
-    return ConstString(name_buffer.c_str());
-  }
-
-  for (size_t idx = 0; idx < rank; ++idx) {
-    if (idx > 0)
-      name_stream << ", ";
-
-    const ArrayBound &lb = shapes[idx].GetLowerBound();
-    const ArrayBound &ub = shapes[idx].GetUpperBound();
-
-    if (is_star && idx == rank - 1) {
-      if (lb.IsExplicit() && lb.GetBound() != 1)
-        name_stream << lb.GetBound() << ":";
-      name_stream << "*";
-    } else if (ub.IsColon()) {
-      // Unknown bound elements
-      name_stream << ":";
-    } else if (ub.IsExplicit()) {
-      // Explicit bounds
-      if (lb.GetBound() != 1) {
-        name_stream << lb.GetBound() << ":";
-      }
-      name_stream << ub.GetBound();
-    }
-  }
-
-  name_stream << ")";
-
-  if (is_allocatable) {
-    name_stream << ", allocatable";
-  }
-
-  name_stream.flush();
-  return ConstString(name_buffer.c_str());
-}
+ConstString CreateArrayTypeName(const CompilerType &element_type,
+                                const llvm::ArrayRef<ArrayShape> shapes,
+                                bool is_allocatable, bool is_star,
+                                bool is_assumed_rank);
 } // namespace fortran
 } // namespace plugin
 } // namespace lldb_private
