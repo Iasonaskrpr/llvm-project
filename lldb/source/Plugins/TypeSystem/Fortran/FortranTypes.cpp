@@ -16,28 +16,30 @@ namespace fortran {
 
 FortranType::~FortranType() = default;
 
-FortranFunction::FortranFunction(ConstString func_name,
-                  const llvm::SmallVectorImpl<CompilerType> &parameters)
-      : FortranType(FortranType::KIND_FUNCTION, 0, func_name) {
+FortranFunction::FortranFunction(
+    ConstString func_name,
+    const llvm::SmallVectorImpl<CompilerType> &parameters)
+    : FortranType(FortranType::KIND_FUNCTION, 0, func_name) {
   m_parameters.assign(parameters.begin(), parameters.end());
 }
 
 FortranArray::FortranArray(CompilerType element_type,
-               const llvm::SmallVectorImpl<ArrayShape> &dimensions,
-               ConstString array_type_name, uint64_t total_array_size,
-               bool is_allocatable, bool is_dynamic, bool is_star, bool is_auto,
-               bool is_assumed_rank, uint64_t total_elements,
-               DWARFExpressionList allocated_exp,
-               DWARFExpressionList data_location_exp,
-               DWARFExpressionList rank_exp)
-      : FortranType(TypeKind::KIND_ARRAY, total_array_size, array_type_name),
-        m_element_type(element_type),
-        m_dimensions(dimensions.begin(), dimensions.end()),
-        m_is_allocatable(is_allocatable), m_is_dynamic(is_dynamic),
-        m_is_star(is_star), m_is_auto(is_auto),
-        m_is_assumed_rank(is_assumed_rank), m_total_elements(total_elements),
-        m_allocated_exp(allocated_exp), m_data_location_exp(data_location_exp),
-        m_rank_exp(rank_exp) {}
+                           const llvm::SmallVectorImpl<ArrayShape> &dimensions,
+                           ConstString array_type_name,
+                           uint64_t total_array_size, bool is_allocatable,
+                           bool is_dynamic, bool is_star, bool is_auto,
+                           bool is_assumed_rank, uint64_t total_elements,
+                           DWARFExpressionList allocated_exp,
+                           DWARFExpressionList data_location_exp,
+                           DWARFExpressionList rank_exp)
+    : FortranType(TypeKind::KIND_ARRAY, total_array_size, array_type_name),
+      m_element_type(element_type),
+      m_dimensions(dimensions.begin(), dimensions.end()),
+      m_is_allocatable(is_allocatable), m_is_dynamic(is_dynamic),
+      m_is_star(is_star), m_is_auto(is_auto),
+      m_is_assumed_rank(is_assumed_rank), m_total_elements(total_elements),
+      m_allocated_exp(allocated_exp), m_data_location_exp(data_location_exp),
+      m_rank_exp(rank_exp) {}
 
 uint64_t FortranArray::GetElementByteSize() const {
   auto byte_size_or_err = m_element_type.GetByteSize(nullptr);
