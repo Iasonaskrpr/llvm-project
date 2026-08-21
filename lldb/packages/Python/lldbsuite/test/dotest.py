@@ -266,14 +266,15 @@ def parseOptionsAndInitTestdirs():
                 if which(candidate):
                     configuration.compiler = candidate
                     break
-    
+
     if args.fortran_compiler:
         configuration.fortran_compiler = os.path.abspath(args.fortran_compiler)
         if not is_exe(configuration.fortran_compiler):
             configuration.fortran_compiler = which(args.fortran_compiler)
         if not is_exe(configuration.fortran_compiler):
             logging.error(
-                '"%s" is not a valid Fortran compiler executable; aborting...', args.fortran_compiler
+                '"%s" is not a valid Fortran compiler executable; aborting...',
+                args.fortran_compiler,
             )
             sys.exit(-1)
     else:

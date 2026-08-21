@@ -1,5 +1,5 @@
 """
-Tests that the integer intrinsic type with different byte sizes works as expected 
+Tests that the integer intrinsic type with different byte sizes works as expected
 """
 
 import lldb
@@ -13,7 +13,7 @@ class FortranTestIntegers(TestBase):
         """Tests if integers return the correct name, kind and value."""
         self.build()
         self.main_source_file = lldb.SBFileSpec("integers.f90")
-        (target, process, thread, bkpt) = lldbutil.run_to_source_breakpoint(
+        target, process, thread, bkpt = lldbutil.run_to_source_breakpoint(
             self, "! Breakpoint here", self.main_source_file
         )
 
@@ -30,7 +30,7 @@ class FortranTestIntegers(TestBase):
         self.assertEqual(short_int.GetTypeName(), "INTEGER(KIND=2)")
         self.assertEqual(short_int.GetByteSize(), 2)
         self.assertEqual(short_int.GetValueAsSigned(), 32767)
-        
+
         normal_int = frame.FindVariable("normal_int")
         self.assertSuccess(normal_int.GetError(), "Failed to fetch normal_int")
         self.assertEqual(normal_int.GetTypeName(), "INTEGER")
