@@ -53,7 +53,7 @@ TEST_F(TestTypeSystemFortran, TestBaseTypes) {
   EXPECT_TRUE(logical_type.IsValid());
   auto bitsize_or_err = logical_type.GetBitSize(nullptr);
   ASSERT_THAT_EXPECTED(bitsize_or_err, llvm::Succeeded());
-  EXPECT_EQ(*bitsize_or_err, 32);
+  EXPECT_EQ(*bitsize_or_err, 32U);
   EXPECT_EQ(m_ast->GetBasicTypeEnumeration(logical_type.GetOpaqueQualType()),
             eBasicTypeBool);
 
@@ -62,7 +62,7 @@ TEST_F(TestTypeSystemFortran, TestBaseTypes) {
   EXPECT_TRUE(int8_type.IsValid());
   bitsize_or_err = int8_type.GetBitSize(nullptr);
   ASSERT_THAT_EXPECTED(bitsize_or_err, llvm::Succeeded());
-  EXPECT_EQ(*bitsize_or_err, 8);
+  EXPECT_EQ(*bitsize_or_err, 8U);
   EXPECT_EQ(m_ast->GetBasicTypeEnumeration(int8_type.GetOpaqueQualType()),
             eBasicTypeSignedChar);
 
@@ -71,7 +71,7 @@ TEST_F(TestTypeSystemFortran, TestBaseTypes) {
   EXPECT_TRUE(int16_type.IsValid());
   bitsize_or_err = int16_type.GetBitSize(nullptr);
   ASSERT_THAT_EXPECTED(bitsize_or_err, llvm::Succeeded());
-  EXPECT_EQ(*bitsize_or_err, 16);
+  EXPECT_EQ(*bitsize_or_err, 16U);
   EXPECT_EQ(m_ast->GetBasicTypeEnumeration(int16_type.GetOpaqueQualType()),
             eBasicTypeShort);
 
@@ -80,7 +80,7 @@ TEST_F(TestTypeSystemFortran, TestBaseTypes) {
   EXPECT_TRUE(int32_type.IsValid());
   bitsize_or_err = int32_type.GetBitSize(nullptr);
   ASSERT_THAT_EXPECTED(bitsize_or_err, llvm::Succeeded());
-  EXPECT_EQ(*bitsize_or_err, 32);
+  EXPECT_EQ(*bitsize_or_err, 32U);
   EXPECT_EQ(m_ast->GetBasicTypeEnumeration(int32_type.GetOpaqueQualType()),
             eBasicTypeInt);
 
@@ -89,7 +89,7 @@ TEST_F(TestTypeSystemFortran, TestBaseTypes) {
   EXPECT_TRUE(int64_type.IsValid());
   bitsize_or_err = int64_type.GetBitSize(nullptr);
   ASSERT_THAT_EXPECTED(bitsize_or_err, llvm::Succeeded());
-  EXPECT_EQ(*bitsize_or_err, 64);
+  EXPECT_EQ(*bitsize_or_err, 64U);
   EXPECT_EQ(m_ast->GetBasicTypeEnumeration(int64_type.GetOpaqueQualType()),
             eBasicTypeLongLong);
 
@@ -98,7 +98,7 @@ TEST_F(TestTypeSystemFortran, TestBaseTypes) {
   EXPECT_TRUE(int128_type.IsValid());
   bitsize_or_err = int128_type.GetBitSize(nullptr);
   ASSERT_THAT_EXPECTED(bitsize_or_err, llvm::Succeeded());
-  EXPECT_EQ(*bitsize_or_err, 128);
+  EXPECT_EQ(*bitsize_or_err, 128U);
   EXPECT_EQ(m_ast->GetBasicTypeEnumeration(int128_type.GetOpaqueQualType()),
             eBasicTypeInt128);
 
@@ -107,7 +107,7 @@ TEST_F(TestTypeSystemFortran, TestBaseTypes) {
   EXPECT_TRUE(real16_type.IsValid());
   bitsize_or_err = real16_type.GetBitSize(nullptr);
   ASSERT_THAT_EXPECTED(bitsize_or_err, llvm::Succeeded());
-  EXPECT_EQ(*bitsize_or_err, 16);
+  EXPECT_EQ(*bitsize_or_err, 16U);
   EXPECT_EQ(m_ast->GetBasicTypeEnumeration(real16_type.GetOpaqueQualType()),
             eBasicTypeHalf);
 
@@ -116,7 +116,7 @@ TEST_F(TestTypeSystemFortran, TestBaseTypes) {
   EXPECT_TRUE(real32_type.IsValid());
   bitsize_or_err = real32_type.GetBitSize(nullptr);
   ASSERT_THAT_EXPECTED(bitsize_or_err, llvm::Succeeded());
-  EXPECT_EQ(*bitsize_or_err, 32);
+  EXPECT_EQ(*bitsize_or_err, 32U);
   EXPECT_EQ(m_ast->GetBasicTypeEnumeration(real32_type.GetOpaqueQualType()),
             eBasicTypeFloat);
 
@@ -125,7 +125,7 @@ TEST_F(TestTypeSystemFortran, TestBaseTypes) {
   EXPECT_TRUE(real64_type.IsValid());
   bitsize_or_err = real64_type.GetBitSize(nullptr);
   ASSERT_THAT_EXPECTED(bitsize_or_err, llvm::Succeeded());
-  EXPECT_EQ(*bitsize_or_err, 64);
+  EXPECT_EQ(*bitsize_or_err, 64U);
   EXPECT_EQ(m_ast->GetBasicTypeEnumeration(real64_type.GetOpaqueQualType()),
             eBasicTypeDouble);
 
@@ -134,7 +134,7 @@ TEST_F(TestTypeSystemFortran, TestBaseTypes) {
   EXPECT_TRUE(real128_type.IsValid());
   bitsize_or_err = real128_type.GetBitSize(nullptr);
   ASSERT_THAT_EXPECTED(bitsize_or_err, llvm::Succeeded());
-  EXPECT_EQ(*bitsize_or_err, 128);
+  EXPECT_EQ(*bitsize_or_err, 128U);
   EXPECT_EQ(m_ast->GetBasicTypeEnumeration(real128_type.GetOpaqueQualType()),
             eBasicTypeFloat128);
 
@@ -143,7 +143,7 @@ TEST_F(TestTypeSystemFortran, TestBaseTypes) {
   EXPECT_TRUE(complex64_type.IsValid());
   bitsize_or_err = complex64_type.GetBitSize(nullptr);
   ASSERT_THAT_EXPECTED(bitsize_or_err, llvm::Succeeded());
-  EXPECT_EQ(*bitsize_or_err, 64);
+  EXPECT_EQ(*bitsize_or_err, 64U);
   EXPECT_EQ(m_ast->GetBasicTypeEnumeration(complex64_type.GetOpaqueQualType()),
             eBasicTypeFloatComplex);
 
@@ -152,7 +152,7 @@ TEST_F(TestTypeSystemFortran, TestBaseTypes) {
   EXPECT_TRUE(complex128_type.IsValid());
   bitsize_or_err = complex128_type.GetBitSize(nullptr);
   ASSERT_THAT_EXPECTED(bitsize_or_err, llvm::Succeeded());
-  EXPECT_EQ(*bitsize_or_err, 128);
+  EXPECT_EQ(*bitsize_or_err, 128U);
   EXPECT_EQ(m_ast->GetBasicTypeEnumeration(complex128_type.GetOpaqueQualType()),
             eBasicTypeDoubleComplex);
 
@@ -161,7 +161,7 @@ TEST_F(TestTypeSystemFortran, TestBaseTypes) {
   EXPECT_TRUE(complex256_type.IsValid());
   bitsize_or_err = complex256_type.GetBitSize(nullptr);
   ASSERT_THAT_EXPECTED(bitsize_or_err, llvm::Succeeded());
-  EXPECT_EQ(*bitsize_or_err, 256);
+  EXPECT_EQ(*bitsize_or_err, 256U);
   EXPECT_EQ(m_ast->GetBasicTypeEnumeration(complex256_type.GetOpaqueQualType()),
             eBasicTypeLongDoubleComplex);
 
@@ -292,7 +292,7 @@ TEST_F(TestTypeSystemFortran, TestGetBasicTypeFromAST) {
 
   auto bitsize_or_err = int_type.GetBitSize(nullptr);
   ASSERT_THAT_EXPECTED(bitsize_or_err, llvm::Succeeded());
-  EXPECT_EQ(*bitsize_or_err, 32);
+  EXPECT_EQ(*bitsize_or_err, 32U);
 
   CompilerType complex_type =
       m_ast->GetBasicTypeFromAST(eBasicTypeDoubleComplex);

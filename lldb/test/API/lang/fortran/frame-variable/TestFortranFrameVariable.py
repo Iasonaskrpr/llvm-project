@@ -2,7 +2,6 @@
 Tests that the frame variable command works 
 """
 
-
 import lldb
 import lldbsuite.test.lldbutil as lldbutil
 from lldbsuite.test.lldbtest import *

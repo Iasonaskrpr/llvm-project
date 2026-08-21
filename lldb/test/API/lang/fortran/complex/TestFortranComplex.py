@@ -2,7 +2,6 @@
 Tests that the complex intrinsic type with different byte sizes works as expected 
 """
 
-
 import lldb
 import lldbsuite.test.lldbutil as lldbutil
 from lldbsuite.test.lldbtest import *
