@@ -30,6 +30,19 @@ public:
 
   ~DWARFASTParserFortran() override;
 
+  // LLVM RTTI support
+  static bool classof(const DWARFASTParser *Parser) {
+    return Parser->GetKind() == Kind::DWARFASTParserFortran;
+  }
+
+  /// If \p type_sp is valid, calculate and set its symbol context scope, and
+  /// update the type list for its backing symbol file.
+  ///
+  /// Returns \p type_sp.
+  lldb::TypeSP UpdateSymbolContextScopeForType(
+      const lldb_private::SymbolContext &sc,
+      const lldb_private::plugin::dwarf::DWARFDIE &die, lldb::TypeSP type_sp);
+
   lldb::TypeSP
   ParseTypeFromDWARF(const lldb_private::SymbolContext &sc,
                      const lldb_private::plugin::dwarf::DWARFDIE &die,
