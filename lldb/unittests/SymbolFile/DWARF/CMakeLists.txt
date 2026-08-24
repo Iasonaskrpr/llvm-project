@@ -1,3 +1,10 @@
+set(LLVM_OPTIONAL_SOURCES DWARFASTParserFortranTests.cpp)
+
+set(FORTRAN_DWARF_TESTS "")
+if(LLDB_ENABLE_FORTRAN)
+  set(FORTRAN_DWARF_TESTS DWARFASTParserFortranTests.cpp)
+endif()
+
 add_lldb_unittest(SymbolFileDWARFTests
   DWARFASTParserClangTests.cpp
   DWARFDebugNamesIndexTest.cpp
@@ -7,6 +14,7 @@ add_lldb_unittest(SymbolFileDWARFTests
   SymbolFileDWARFTests.cpp
   XcodeSDKModuleTests.cpp
   DWARF64UnitTest.cpp
+  ${FORTRAN_DWARF_TESTS}
 
   LINK_COMPONENTS
     Support
@@ -24,6 +32,12 @@ add_lldb_unittest(SymbolFileDWARFTests
     lldbSymbolHelpers
     LLVMTestingSupport
   )
+
+if(LLDB_ENABLE_FORTRAN)
+  target_link_libraries(SymbolFileDWARFTests PRIVATE 
+    lldbPluginTypeSystemFortran
+  )
+endif()
 
 set(test_inputs
    test-dwarf.exe
