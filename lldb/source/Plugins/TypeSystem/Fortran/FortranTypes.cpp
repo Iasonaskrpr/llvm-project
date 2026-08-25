@@ -20,10 +20,11 @@ char FortranType::ID;
 
 FortranType::~FortranType() = default;
 
-static ConstString
-CreateFortranFunctionName(ConstString func_name,
-                          const llvm::SmallVectorImpl<CompilerType> &parameters,
-                          CompilerType return_type) {
+static ConstString CreateFortranFunctionName(
+    ConstString func_name,
+    const llvm::SmallVectorImpl<CompilerType> &parameters,
+    const llvm::SmallVectorImpl<llvm::StringRef> &parameter_names,
+    CompilerType return_type) {
   std::string name_buffer;
   llvm::raw_string_ostream name_stream(name_buffer);
 
@@ -31,10 +32,11 @@ CreateFortranFunctionName(ConstString func_name,
     name_stream << return_type.GetTypeName().AsCString("") << " ";
 
   name_stream << func_name.AsCString("<unnamed function>") << "(";
-  for (auto &parameter : parameters) {
-    if (parameter != parameters.front())
+  for (size_t idx = 0; idx < parameters.size(); idx++) {
+    if (idx != 0)
       name_stream << ", ";
-    name_stream << parameter.GetTypeName().AsCString("");
+    name_stream << parameters[idx].GetTypeName().AsCString("") << " ";
+    name_stream << parameter_names[idx].str();
   }
   name_stream << ")";
   name_stream.flush();
@@ -44,9 +46,10 @@ CreateFortranFunctionName(ConstString func_name,
 FortranFunction::FortranFunction(
     ConstString func_name,
     const llvm::SmallVectorImpl<CompilerType> &parameters,
+    const llvm::SmallVectorImpl<llvm::StringRef> &parameter_names,
     CompilerType return_type)
-    : FortranType(
-          FortranType::KIND_FUNCTION, 0,
-          CreateFortranFunctionName(func_name, parameters, return_type)),
+    : FortranType(FortranType::KIND_FUNCTION, 0,
+                  CreateFortranFunctionName(func_name, parameters,
+                                            parameter_names, return_type)),
       m_parameters(parameters.begin(), parameters.end()),
       m_return_type(return_type) {}

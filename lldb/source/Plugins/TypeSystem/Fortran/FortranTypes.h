@@ -74,6 +74,7 @@ class FortranFunction : public FortranType {
 public:
   FortranFunction(ConstString func_name,
                   const llvm::SmallVectorImpl<CompilerType> &parameters,
+                  const llvm::SmallVectorImpl<llvm::StringRef> &parameter_names,
                   CompilerType return_type);
 
   llvm::ArrayRef<CompilerType> GetParameters() const { return m_parameters; }
