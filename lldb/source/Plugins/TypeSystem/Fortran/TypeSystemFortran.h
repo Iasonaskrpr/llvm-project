@@ -198,11 +198,8 @@ public:
     return GetTypeName(type, false);
   }
 
-  uint32_t
-  GetTypeInfo(lldb::opaque_compiler_type_t type,
-              CompilerType *pointee_or_element_compiler_type) override {
-    return 0;
-  }
+  uint32_t GetTypeInfo(lldb::opaque_compiler_type_t type,
+                       CompilerType *pointee_or_element_compiler_type) override;
 
   lldb::LanguageType
   GetMinimumLanguage(lldb::opaque_compiler_type_t type) override {
@@ -266,6 +263,10 @@ public:
     return CompilerType();
   }
 
+  void SetByteOrder(lldb::ByteOrder byte_order) { m_byte_order = byte_order; }
+
+  lldb::ByteOrder GetByteOrder() { return m_byte_order; }
+
   // Exploring the type
 
   const llvm::fltSemantics &
@@ -277,13 +278,9 @@ public:
   GetBitSize(lldb::opaque_compiler_type_t type,
              ExecutionContextScope *exe_scope) override;
 
-  lldb::Encoding GetEncoding(lldb::opaque_compiler_type_t type) override {
-    return lldb::eEncodingInvalid;
-  }
+  lldb::Encoding GetEncoding(lldb::opaque_compiler_type_t type) override;
 
-  lldb::Format GetFormat(lldb::opaque_compiler_type_t type) override {
-    return lldb::eFormatDefault;
-  }
+  lldb::Format GetFormat(lldb::opaque_compiler_type_t type) override;
 
   llvm::Expected<uint32_t>
   GetNumChildren(lldb::opaque_compiler_type_t type,
@@ -373,14 +370,12 @@ public:
                      lldb::Format format, const DataExtractor &data,
                      lldb::offset_t data_offset, size_t data_byte_size,
                      uint32_t bitfield_bit_size, uint32_t bitfield_bit_offset,
-                     ExecutionContextScope *exe_scope) override {
-    return false;
-  }
+                     ExecutionContextScope *exe_scope) override;
 
   /// Dump the type to stdout.
   void DumpTypeDescription(
       lldb::opaque_compiler_type_t type,
-      lldb::DescriptionLevel level = lldb::eDescriptionLevelFull) override {}
+      lldb::DescriptionLevel level = lldb::eDescriptionLevelFull) override;
 
   /// Print a description of the type to a stream. The exact implementation
   /// varies, but the expectation is that eDescriptionLevelFull returns a
@@ -388,7 +383,7 @@ public:
   /// does a dump of the underlying AST if applicable.
   void DumpTypeDescription(
       lldb::opaque_compiler_type_t type, Stream &s,
-      lldb::DescriptionLevel level = lldb::eDescriptionLevelFull) override {}
+      lldb::DescriptionLevel level = lldb::eDescriptionLevelFull) override;
 
   /// Dump a textual representation of the internal TypeSystem state to the
   /// given stream.

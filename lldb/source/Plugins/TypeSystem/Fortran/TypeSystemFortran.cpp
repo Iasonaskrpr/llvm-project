@@ -15,6 +15,7 @@
 
 #include "lldb/Core/DumpDataExtractor.h"
 #include "lldb/Core/PluginManager.h"
+#include "lldb/Host/StreamFile.h"
 #include "lldb/Symbol/SymbolFile.h"
 #include "lldb/Target/Target.h"
 
@@ -42,6 +43,33 @@ static bool IsLanguageSupported(lldb::LanguageType language) {
   return false;
 }
 
+static bool DumpComplex(Stream &s, const lldb_private::DataExtractor &data,
+                        lldb::offset_t &offset, size_t data_byte_size) {
+  if (sizeof(float) * 2 == data_byte_size) {
+    float f32_1 = data.GetFloat(&offset);
+    float f32_2 = data.GetFloat(&offset);
+
+    s.Printf("(%g, %g)", f32_1, f32_2);
+    return true;
+  } else if (sizeof(double) * 2 == data_byte_size) {
+    double d64_1 = data.GetDouble(&offset);
+    double d64_2 = data.GetDouble(&offset);
+
+    s.Printf("(%lg, %lg)", d64_1, d64_2);
+    return true;
+  } else if (sizeof(long double) * 2 == data_byte_size) {
+    long double ld64_1 = data.GetLongDouble(&offset);
+    long double ld64_2 = data.GetLongDouble(&offset);
+    s.Printf("(%Lg, %Lg)", ld64_1, ld64_2);
+    return true;
+  } else {
+    s.Printf("error: unsupported byte size (%" PRIu64
+             ") for complex float format",
+             (uint64_t)data_byte_size);
+    return false;
+  }
+}
+
 char TypeSystemFortran::ID;
 
 TypeSystemFortran::~TypeSystemFortran() = default;
@@ -63,11 +91,20 @@ plugin::dwarf::DWARFASTParser *TypeSystemFortran::GetDWARFParser() {
   return m_dwarf_ast_parser_up.get();
 }
 
-lldb::TypeSystemSP
-TypeSystemFortran::CreateInstance(lldb::LanguageType language, Module *module,
-                                  Target *target) {
+TypeSystemSP TypeSystemFortran::CreateInstance(LanguageType language,
+                                               Module *module, Target *target) {
+
   if (IsLanguageSupported(language)) {
-    return std::make_shared<TypeSystemFortran>();
+    auto type_system_sp = std::make_shared<TypeSystemFortran>();
+
+    // Get the byte order from the target or module and store it
+    if (target) {
+      type_system_sp->SetByteOrder(target->GetArchitecture().GetByteOrder());
+    } else if (module) {
+      type_system_sp->SetByteOrder(module->GetArchitecture().GetByteOrder());
+    }
+
+    return type_system_sp;
   }
   return TypeSystemSP();
 }
@@ -173,6 +210,36 @@ ConstString TypeSystemFortran::GetTypeName(opaque_compiler_type_t type,
   default:
     return ConstString("Unsupported");
   }
+}
+
+uint32_t
+TypeSystemFortran::GetTypeInfo(opaque_compiler_type_t type,
+                               CompilerType *pointee_or_element_compiler_type) {
+  if (!type)
+    return 0;
+  FortranType *fortran_type = static_cast<FortranType *>(type);
+  uint32_t builtin_type_flags = 0;
+  int type_kind = fortran_type->GetKind();
+
+  switch (type_kind) {
+  case FortranType::KIND_REAL:
+  case FortranType::KIND_INTEGER:
+  case FortranType::KIND_LOGICAL:
+  case FortranType::KIND_COMPLEX:
+    builtin_type_flags = eTypeIsBuiltIn | eTypeHasValue | eTypeIsScalar;
+    if (type_kind == FortranType::KIND_INTEGER)
+      builtin_type_flags |= eTypeIsInteger | eTypeIsSigned;
+    if (type_kind == FortranType::KIND_REAL)
+      builtin_type_flags |= eTypeIsFloat;
+    if (type_kind == FortranType::KIND_COMPLEX)
+      builtin_type_flags |= eTypeIsComplex;
+    break;
+  case FortranType::KIND_FUNCTION:
+    return eTypeIsFuncPrototype;
+  default:
+    break;
+  }
+  return builtin_type_flags;
 }
 
 CompilerType TypeSystemFortran::CreateBaseType(uint32_t dwarf_encoding,
@@ -302,6 +369,41 @@ TypeSystemFortran::GetBitSize(opaque_compiler_type_t type,
   return fortran_type->GetBitSize();
 }
 
+Encoding TypeSystemFortran::GetEncoding(opaque_compiler_type_t type) {
+  if (!type)
+    return eEncodingInvalid;
+  FortranType *fortran_type = static_cast<FortranType *>(type);
+  switch (fortran_type->GetKind()) {
+  case FortranType::KIND_COMPLEX:
+  case FortranType::KIND_REAL:
+    return eEncodingIEEE754;
+  case FortranType::KIND_INTEGER:
+    return eEncodingSint;
+  case FortranType::KIND_LOGICAL:
+    return eEncodingUint;
+  default:
+    return eEncodingInvalid;
+  }
+}
+
+Format TypeSystemFortran::GetFormat(opaque_compiler_type_t type) {
+  if (!type)
+    return eFormatDefault;
+  FortranType *fortran_type = static_cast<FortranType *>(type);
+  switch (fortran_type->GetKind()) {
+  case FortranType::KIND_INTEGER:
+    return eFormatDecimal;
+  case FortranType::KIND_REAL:
+    return eFormatFloat;
+  case FortranType::KIND_LOGICAL:
+    return eFormatBoolean;
+  case FortranType::KIND_COMPLEX:
+    return eFormatComplex;
+  default:
+    return eFormatDefault;
+  }
+}
+
 BasicType
 TypeSystemFortran::GetBasicTypeEnumeration(lldb::opaque_compiler_type_t type) {
   if (!type)
@@ -351,6 +453,67 @@ TypeSystemFortran::GetBasicTypeEnumeration(lldb::opaque_compiler_type_t type) {
     }
   default:
     return eBasicTypeInvalid;
+  }
+}
+
+bool TypeSystemFortran::DumpTypeValue(
+    lldb::opaque_compiler_type_t type, Stream &s, lldb::Format format,
+    const DataExtractor &data, lldb::offset_t data_offset,
+    size_t data_byte_size, uint32_t bitfield_bit_size,
+    uint32_t bitfield_bit_offset, ExecutionContextScope *exe_scope) {
+  if (!type)
+    return false;
+
+  FortranType *fortran_type = static_cast<FortranType *>(type);
+  int type_kind = fortran_type->GetKind();
+  DataExtractor format_data;
+  switch (type_kind) {
+  case FortranType::KIND_INTEGER:
+  case FortranType::KIND_REAL:
+  case FortranType::KIND_LOGICAL:
+    format_data.SetData(data, 0, data.GetByteSize());
+    format_data.SetAddressByteSize(data.GetAddressByteSize());
+    format_data.SetByteOrder(m_byte_order);
+    return DumpDataExtractor(format_data, &s, data_offset, format,
+                             data_byte_size, 1 /*item_count*/, UINT32_MAX,
+                             LLDB_INVALID_ADDRESS, bitfield_bit_size,
+                             bitfield_bit_offset, exe_scope);
+  case FortranType::KIND_COMPLEX:
+    // For Complex we print the value exactly how Fortran prints it
+    format_data.SetData(data, 0, data.GetByteSize());
+    format_data.SetAddressByteSize(data.GetAddressByteSize());
+    format_data.SetByteOrder(m_byte_order);
+    return DumpComplex(s, data, data_offset, data_byte_size);
+  default:
+    Host::SystemLog(lldb::eSeverityError,
+                    "Error: DumpTypeValue not handled yet.\n");
+    return false;
+  }
+}
+
+void TypeSystemFortran::DumpTypeDescription(lldb::opaque_compiler_type_t type,
+                                            lldb::DescriptionLevel level) {
+  StreamFile s(stdout, false);
+  DumpTypeDescription(type, s, level);
+}
+
+void TypeSystemFortran::DumpTypeDescription(lldb::opaque_compiler_type_t type,
+                                            Stream &s,
+                                            lldb::DescriptionLevel level) {
+  if (!type)
+    return;
+  FortranType *fortran_type = static_cast<FortranType *>(type);
+
+  switch (fortran_type->GetKind()) {
+  case FortranType::KIND_COMPLEX:
+  case FortranType::KIND_FUNCTION:
+  case FortranType::KIND_INTEGER:
+  case FortranType::KIND_LOGICAL:
+  case FortranType::KIND_REAL:
+    s << fortran_type->GetName();
+    break;
+  default:
+    break;
   }
 }
 
