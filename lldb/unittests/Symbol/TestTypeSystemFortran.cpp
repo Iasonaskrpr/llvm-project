@@ -171,6 +171,27 @@ TEST_F(TestTypeSystemFortran, TestBaseTypes) {
             eBasicTypeInvalid);
 }
 
+TEST_F(TestTypeSystemFortran, TestEncodingAndFormat) {
+  CompilerType logical_type =
+      m_ast->CreateBaseType(llvm::dwarf::DW_ATE_boolean, 32, ConstString());
+  CompilerType int_type =
+      m_ast->CreateBaseType(llvm::dwarf::DW_ATE_signed, 32, ConstString());
+  CompilerType real_type =
+      m_ast->CreateBaseType(llvm::dwarf::DW_ATE_float, 32, ConstString());
+  CompilerType complex_type = m_ast->CreateBaseType(
+      llvm::dwarf::DW_ATE_complex_float, 64, ConstString());
+
+  EXPECT_EQ(logical_type.GetEncoding(), eEncodingUint);
+  EXPECT_EQ(int_type.GetEncoding(), eEncodingSint);
+  EXPECT_EQ(real_type.GetEncoding(), eEncodingIEEE754);
+  EXPECT_EQ(complex_type.GetEncoding(), eEncodingIEEE754);
+
+  EXPECT_EQ(logical_type.GetFormat(), eFormatBoolean);
+  EXPECT_EQ(int_type.GetFormat(), eFormatDecimal);
+  EXPECT_EQ(real_type.GetFormat(), eFormatFloat);
+  EXPECT_EQ(complex_type.GetFormat(), eFormatComplex);
+}
+
 TEST_F(TestTypeSystemFortran, TestTypeClassifications) {
   CompilerType logical_type =
       m_ast->CreateBaseType(llvm::dwarf::DW_ATE_boolean, 32, ConstString());
@@ -193,6 +214,40 @@ TEST_F(TestTypeSystemFortran, TestTypeClassifications) {
   EXPECT_FALSE(int_type.IsFloatingPointType());
   EXPECT_FALSE(logical_type.IsFloatingPointType());
   EXPECT_FALSE(complex_type.IsFloatingPointType());
+}
+
+TEST_F(TestTypeSystemFortran, TestGetTypeInfo) {
+  CompilerType int_type =
+      m_ast->CreateBaseType(llvm::dwarf::DW_ATE_signed, 32, ConstString());
+  CompilerType real_type =
+      m_ast->CreateBaseType(llvm::dwarf::DW_ATE_float, 32, ConstString());
+  CompilerType complex_type = m_ast->CreateBaseType(
+      llvm::dwarf::DW_ATE_complex_float, 64, ConstString());
+  llvm::SmallVector<CompilerType, 0> parameters;
+  llvm::SmallVector<llvm::StringRef, 0> parameter_names;
+  CompilerType function_type = m_ast->CreateFortranFunction(
+      ConstString("test_func"), parameters, parameter_names, complex_type);
+  uint32_t int_flags = int_type.GetTypeInfo();
+  EXPECT_TRUE(int_flags & eTypeIsBuiltIn);
+  EXPECT_TRUE(int_flags & eTypeHasValue);
+  EXPECT_TRUE(int_flags & eTypeIsScalar);
+  EXPECT_TRUE(int_flags & eTypeIsInteger);
+  EXPECT_TRUE(int_flags & eTypeIsSigned);
+
+  uint32_t real_flags = real_type.GetTypeInfo();
+  EXPECT_TRUE(real_flags & eTypeIsBuiltIn);
+  EXPECT_TRUE(real_flags & eTypeHasValue);
+  EXPECT_TRUE(real_flags & eTypeIsScalar);
+  EXPECT_TRUE(real_flags & eTypeIsFloat);
+
+  uint32_t complex_flags = complex_type.GetTypeInfo();
+  EXPECT_TRUE(complex_flags & eTypeIsBuiltIn);
+  EXPECT_TRUE(complex_flags & eTypeHasValue);
+  EXPECT_TRUE(complex_flags & eTypeIsComplex);
+  EXPECT_TRUE(complex_flags & eTypeIsScalar);
+
+  uint32_t function_flags = function_type.GetTypeInfo();
+  EXPECT_TRUE(function_flags & eTypeIsFuncPrototype);
 }
 
 TEST_F(TestTypeSystemFortran, TestTypeNameGeneration) {
