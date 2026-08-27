@@ -207,6 +207,35 @@ lldb::TypeSP DWARFASTParserFortran::ParseTypeFromDWARF(
                                   LLDB_INVALID_UID, Type::eEncodingIsUID, decl,
                                   compiler_type, Type::ResolveState::Full);
       } break;
+      case DW_TAG_pointer_type: {
+        dwarf->GetDIEToType()[die.GetDIE()] = DIE_IS_BEING_PARSED;
+
+        CompilerType pointee_type;
+        DWARFDIE type_die = die.GetReferencedDIE(DW_AT_type);
+        lldb::user_id_t pointee_uid = LLDB_INVALID_UID;
+
+        if (type_die) {
+          pointee_uid = type_die.GetID();
+          if (Type *resolved_type = die.GetDWARF()->ResolveType(type_die))
+            pointee_type = resolved_type->GetForwardCompilerType();
+        }
+
+        if (!pointee_type.IsValid()) {
+          type_name = ConstString("void*");
+          compiler_type = m_ast.GetPointerType(nullptr);
+        } else {
+          type_name = ConstString(
+              pointee_type.GetTypeName().GetStringRef().str() + "*");
+          compiler_type =
+              m_ast.GetPointerType(pointee_type.GetOpaqueQualType());
+        }
+
+        uint64_t byte_size = m_ast.GetPointerByteSize();
+        type_sp =
+            dwarf->MakeType(die.GetID(), type_name, byte_size, nullptr,
+                            pointee_uid, Type::eEncodingIsPointerUID, decl,
+                            compiler_type, Type::ResolveState::Forward);
+      } break;
       default:
         if (log) {
           dwarf->GetObjectFile()->GetModule()->LogMessage(

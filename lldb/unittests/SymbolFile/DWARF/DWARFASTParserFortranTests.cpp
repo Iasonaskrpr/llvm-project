@@ -473,3 +473,132 @@ DWARF:
   // Make sure we actually found and tested all 3!
   EXPECT_EQ(subprograms_found, 3);
 }
+
+TEST_F(DWARFASTParserFortranTests, TestBaseTypeAndFunctionPointerParsingWorks) {
+  const char *yamldata = R"(
+--- !ELF
+FileHeader:
+  Class:           ELFCLASS64
+  Data:            ELFDATA2LSB
+  Type:            ET_REL
+  Machine:         EM_X86_64
+
+DWARF:
+  debug_abbrev:
+    - Table:
+        - Code:            1
+          Tag:             DW_TAG_compile_unit
+          Children:        DW_CHILDREN_yes
+          Attributes:
+            - Attribute:   DW_AT_language
+              Form:        DW_FORM_data2
+        - Code:            2
+          Tag:             DW_TAG_pointer_type
+          Children:        DW_CHILDREN_no
+          Attributes:
+            - Attribute:   DW_AT_type
+              Form:        DW_FORM_ref4
+        - Code:            3
+          Tag:             DW_TAG_subroutine_type
+          Children:        DW_CHILDREN_yes
+          Attributes:
+            - Attribute:   DW_AT_type
+              Form:        DW_FORM_ref4
+        - Code:            4
+          Tag:             DW_TAG_formal_parameter
+          Children:        DW_CHILDREN_no
+          Attributes:
+            - Attribute:   DW_AT_type
+              Form:        DW_FORM_ref4
+        - Code:            5
+          Tag:             DW_TAG_base_type
+          Children:        DW_CHILDREN_no
+          Attributes:
+            - Attribute:   DW_AT_name
+              Form:        DW_FORM_string
+            - Attribute:   DW_AT_encoding
+              Form:        DW_FORM_data1
+            - Attribute:   DW_AT_byte_size
+              Form:        DW_FORM_data1
+
+  debug_info:
+    - Version:         4
+      AddrSize:        8
+      Entries:
+        - AbbrCode:    1
+          Values:
+            - Value:   0x0022
+        # 0x0000000e: Function Pointer Type -> Subroutine Type (0x13)
+        - AbbrCode:    2
+          Values:
+            - Value:   0x00000013
+        # 0x00000013: Subroutine Type -> Return Base Type (0x1e)
+        - AbbrCode:    3
+          Values:
+            - Value:   0x0000001e
+        # 0x00000018: Formal Parameter -> Argument Pointer Type (0x31)
+        - AbbrCode:    4
+          Values:
+            - Value:   0x00000031
+        - AbbrCode:    0 
+        # 0x0000001e: Base Type: integer(kind=4)
+        - AbbrCode:    5
+          Values:
+            - CStr:    'integer(kind=4)'
+            - Value:   0x05  # DW_ATE_signed
+            - Value:   0x04  # byte_size
+        # 0x00000031: Argument Pointer Type -> Base Type (0x1e)
+        - AbbrCode:    2
+          Values:
+            - Value:   0x0000001e
+        - AbbrCode:    0 
+...
+)";
+
+  DWARFASTParserFortranYAMLTester tester(yamldata);
+  DWARFDIE cu_die = tester.GetCUDIE();
+  SymbolContext sc;
+  llvm::SmallVector<CompilerType, 2> ptr_types;
+  for (DWARFDIE child_die : cu_die.children()) {
+    if (child_die.Tag() != DW_TAG_pointer_type)
+      continue;
+
+    bool is_new_type;
+    lldb::TypeSP ptr_type_sp =
+        tester.GetParser().ParseTypeFromDWARF(sc, child_die, &is_new_type);
+
+    ASSERT_NE(ptr_type_sp, nullptr);
+    EXPECT_TRUE(ptr_type_sp->IsValidType());
+
+    ptr_types.push_back(ptr_type_sp->GetForwardCompilerType());
+  }
+  EXPECT_EQ(ptr_types.size(), 2);
+
+  CompilerType func_ptr = ptr_types[0];
+  CompilerType int_ptr = ptr_types[1];
+
+  EXPECT_TRUE(func_ptr.IsFunctionPointerType());
+
+  EXPECT_TRUE(func_ptr.IsPointerType());
+  EXPECT_TRUE(int_ptr.IsPointerType());
+
+  EXPECT_STREQ(func_ptr.GetTypeName().AsCString(""),
+               "INTEGER <unnamed function>(INTEGER * ) *");
+  EXPECT_STREQ(int_ptr.GetTypeName().AsCString(""), "INTEGER *");
+
+  CompilerType int_pointee = int_ptr.GetPointeeType();
+  CompilerType func_pointee = func_ptr.GetPointeeType();
+
+  EXPECT_TRUE(int_pointee.IsInteger());
+  EXPECT_STREQ(int_pointee.GetTypeName().AsCString(""), "INTEGER");
+
+  EXPECT_TRUE(func_pointee.IsFunctionType());
+  EXPECT_STREQ(func_pointee.GetTypeName().AsCString(""),
+               "INTEGER <unnamed function>(INTEGER * )");
+
+  CompilerType return_type = func_pointee.GetFunctionReturnType();
+  EXPECT_TRUE(return_type.IsInteger());
+
+  EXPECT_EQ(func_pointee.GetNumberOfFunctionArguments(), 1u);
+  EXPECT_TRUE(func_pointee.GetFunctionArgumentAtIndex(0).IsPointerType());
+}
