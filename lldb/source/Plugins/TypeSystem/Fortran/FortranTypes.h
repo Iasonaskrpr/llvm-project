@@ -44,6 +44,7 @@ public:
     KIND_REAL,
     KIND_COMPLEX,
     KIND_FUNCTION,
+    KIND_POINTER,
     KIND_UNKNOWN
   };
 
@@ -101,6 +102,30 @@ public:
 private:
   llvm::SmallVector<CompilerType, 4> m_parameters;
   CompilerType m_return_type;
+};
+
+class FortranPointer : public FortranType {
+public:
+  FortranPointer(uint64_t bitsize, const ConstString &pointee_name,
+                 lldb_private::CompilerType pointee_type)
+      : FortranType(FortranType::KIND_POINTER, bitsize,
+                    ConstString(pointee_name.GetString() + " *")),
+        m_pointee_type(pointee_type) {}
+
+  CompilerType GetPointeeType() const { return m_pointee_type; }
+
+  void Profile(llvm::FoldingSetNodeID &id) const {
+    Profile(id, m_pointee_type);
+  }
+
+  static void Profile(llvm::FoldingSetNodeID &id,
+                      lldb_private::CompilerType pointee_type) {
+    if (pointee_type.IsValid())
+      id.AddPointer(pointee_type.GetOpaqueQualType());
+  }
+
+private:
+  lldb_private::CompilerType m_pointee_type;
 };
 
 } // namespace fortran

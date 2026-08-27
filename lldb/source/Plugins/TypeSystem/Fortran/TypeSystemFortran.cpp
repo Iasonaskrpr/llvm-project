@@ -18,6 +18,7 @@
 #include "lldb/Host/StreamFile.h"
 #include "lldb/Symbol/SymbolFile.h"
 #include "lldb/Target/Target.h"
+#include "lldb/ValueObject/ValueObject.h"
 
 #include "Plugins/SymbolFile/DWARF/DWARFASTParserFortran.h"
 
@@ -100,8 +101,12 @@ TypeSystemSP TypeSystemFortran::CreateInstance(LanguageType language,
     // Get the byte order from the target or module and store it
     if (target) {
       type_system_sp->SetByteOrder(target->GetArchitecture().GetByteOrder());
+      type_system_sp->SetAddressByteSize(
+          target->GetArchitecture().GetAddressByteSize());
     } else if (module) {
       type_system_sp->SetByteOrder(module->GetArchitecture().GetByteOrder());
+      type_system_sp->SetAddressByteSize(
+          module->GetArchitecture().GetAddressByteSize());
     }
 
     return type_system_sp;
@@ -178,6 +183,20 @@ TypeSystemFortran::GetFunctionArgumentAtIndex(lldb::opaque_compiler_type_t type,
   return parameters[index];
 }
 
+bool TypeSystemFortran::IsFunctionPointerType(
+    lldb::opaque_compiler_type_t type) {
+  if (!type)
+    return false;
+
+  if (!IsPointerType(type, nullptr))
+    return false;
+
+  FortranPointer *fortran_ptr = static_cast<FortranPointer *>(type);
+  if (!IsFunctionType(fortran_ptr->GetPointeeType().GetOpaqueQualType()))
+    return false;
+  return true;
+}
+
 bool TypeSystemFortran::IsIntegerType(opaque_compiler_type_t type,
                                       bool &is_signed) {
   if (!type)
@@ -188,6 +207,21 @@ bool TypeSystemFortran::IsIntegerType(opaque_compiler_type_t type,
     return true;
   }
   return false;
+}
+
+bool TypeSystemFortran::IsPointerType(lldb::opaque_compiler_type_t type,
+                                      CompilerType *pointee_type) {
+  if (!type)
+    return false;
+
+  FortranType *fortran_type = static_cast<FortranType *>(type);
+  if (fortran_type->GetKind() != FortranType::KIND_POINTER)
+    return false;
+
+  FortranPointer *fortran_ptr = static_cast<FortranPointer *>(fortran_type);
+  if (pointee_type)
+    *pointee_type = fortran_ptr->GetPointeeType();
+  return true;
 }
 
 bool TypeSystemFortran::SupportsLanguage(lldb::LanguageType language) {
@@ -206,6 +240,7 @@ ConstString TypeSystemFortran::GetTypeName(opaque_compiler_type_t type,
   case FortranType::KIND_REAL:
   case FortranType::KIND_COMPLEX:
   case FortranType::KIND_FUNCTION:
+  case FortranType::KIND_POINTER:
     return fortran_type->GetName();
   default:
     return ConstString("Unsupported");
@@ -236,6 +271,8 @@ TypeSystemFortran::GetTypeInfo(opaque_compiler_type_t type,
     break;
   case FortranType::KIND_FUNCTION:
     return eTypeIsFuncPrototype;
+  case FortranType::KIND_POINTER:
+    return eTypeHasChildren | eTypeIsPointer | eTypeHasValue;
   default:
     break;
   }
@@ -360,6 +397,38 @@ TypeSystemFortran::GetFunctionReturnType(lldb::opaque_compiler_type_t type) {
   return return_type;
 }
 
+CompilerType
+TypeSystemFortran::GetPointeeType(lldb::opaque_compiler_type_t type) {
+  CompilerType pointee_type;
+  if (!type || !IsPointerType(type, &pointee_type))
+    return CompilerType();
+
+  return pointee_type;
+}
+
+CompilerType
+TypeSystemFortran::GetPointerType(lldb::opaque_compiler_type_t type) {
+  if (!type)
+    return CompilerType();
+
+  llvm::FoldingSetNodeID id;
+  CompilerType pointee_type(weak_from_this(), type);
+  FortranPointer::Profile(id, pointee_type);
+  void *insert_pos = nullptr;
+  FortranPointer *fortran_type = m_pointers.FindNodeOrInsertPos(id, insert_pos);
+  if (fortran_type)
+    return CompilerType(weak_from_this(), (void *)fortran_type);
+
+  uint32_t address_bitsize = GetAddressByteSize() * 8;
+  auto new_type_up = std::make_unique<FortranPointer>(
+      address_bitsize, pointee_type.GetTypeName(), pointee_type);
+  fortran_type = new_type_up.get();
+
+  m_types.push_back(std::move(new_type_up));
+  m_pointers.InsertNode(fortran_type, insert_pos);
+  return CompilerType(weak_from_this(), (void *)fortran_type);
+}
+
 Expected<uint64_t>
 TypeSystemFortran::GetBitSize(opaque_compiler_type_t type,
                               ExecutionContextScope *exe_scope) {
@@ -379,6 +448,7 @@ Encoding TypeSystemFortran::GetEncoding(opaque_compiler_type_t type) {
     return eEncodingIEEE754;
   case FortranType::KIND_INTEGER:
     return eEncodingSint;
+  case FortranType::KIND_POINTER:
   case FortranType::KIND_LOGICAL:
     return eEncodingUint;
   default:
@@ -399,8 +469,29 @@ Format TypeSystemFortran::GetFormat(opaque_compiler_type_t type) {
     return eFormatBoolean;
   case FortranType::KIND_COMPLEX:
     return eFormatComplex;
+  case FortranType::KIND_POINTER:
+    return eFormatHex;
   default:
     return eFormatDefault;
+  }
+}
+
+llvm::Expected<uint32_t>
+TypeSystemFortran::GetNumChildren(lldb::opaque_compiler_type_t type,
+                                  bool omit_empty_base_classes,
+                                  const ExecutionContext *exe_ctx) {
+  if (!type)
+    return 0;
+
+  FortranType *fortran_type = static_cast<FortranType *>(type);
+  switch (fortran_type->GetKind()) {
+  case FortranType::KIND_POINTER: {
+    if (IsFunctionPointerType(type))
+      return 0;
+    return 1;
+  }
+  default:
+    return 0;
   }
 }
 
@@ -456,6 +547,85 @@ TypeSystemFortran::GetBasicTypeEnumeration(lldb::opaque_compiler_type_t type) {
   }
 }
 
+llvm::Expected<CompilerType> TypeSystemFortran::GetDereferencedType(
+    lldb::opaque_compiler_type_t type, ExecutionContext *exe_ctx,
+    std::string &deref_name, uint32_t &deref_byte_size,
+    int32_t &deref_byte_offset, ValueObject *valobj, uint64_t &language_flags) {
+  if (!IsPointerType(type, nullptr))
+    return llvm::createStringError("not a pointer type");
+
+  uint32_t child_bitfield_bit_size = 0;
+  uint32_t child_bitfield_bit_offset = 0;
+  bool child_is_base_class;
+  bool child_is_deref_of_parent;
+  return GetChildCompilerTypeAtIndex(
+      type, exe_ctx, 0, false, true, false, deref_name, deref_byte_size,
+      deref_byte_offset, child_bitfield_bit_size, child_bitfield_bit_offset,
+      child_is_base_class, child_is_deref_of_parent, valobj, language_flags);
+}
+
+llvm::Expected<CompilerType> TypeSystemFortran::GetChildCompilerTypeAtIndex(
+    lldb::opaque_compiler_type_t type, ExecutionContext *exe_ctx, size_t idx,
+    bool transparent_pointers, bool omit_empty_base_classes,
+    bool ignore_array_bounds, std::string &child_name,
+    uint32_t &child_byte_size, int32_t &child_byte_offset,
+    uint32_t &child_bitfield_bit_size, uint32_t &child_bitfield_bit_offset,
+    bool &child_is_base_class, bool &child_is_deref_of_parent,
+    ValueObject *valobj, uint64_t &language_flags) {
+  if (!type)
+    return llvm::createStringError("invalid type");
+
+  child_bitfield_bit_size = 0;
+  child_bitfield_bit_offset = 0;
+  child_is_base_class = false;
+  language_flags = 0;
+
+  auto num_children_or_err =
+      GetNumChildren(type, omit_empty_base_classes, exe_ctx);
+  if (!num_children_or_err)
+    return num_children_or_err.takeError();
+
+  const bool idx_is_valid = idx < *num_children_or_err;
+  if (!idx_is_valid)
+    return llvm::createStringError("invalid index");
+  auto get_exe_scope = [&exe_ctx]() {
+    return exe_ctx ? exe_ctx->GetBestExecutionContextScope() : nullptr;
+  };
+  FortranType *fortran_type = static_cast<FortranType *>(type);
+  switch (fortran_type->GetKind()) {
+  case FortranType::KIND_POINTER: {
+    CompilerType pointee_type(GetPointeeType(type));
+    if (transparent_pointers && pointee_type.IsAggregateType()) {
+      child_is_deref_of_parent = false;
+      bool tmp_child_is_deref_of_parent = false;
+      return pointee_type.GetChildCompilerTypeAtIndex(
+          exe_ctx, idx, transparent_pointers, omit_empty_base_classes,
+          ignore_array_bounds, child_name, child_byte_size, child_byte_offset,
+          child_bitfield_bit_size, child_bitfield_bit_offset,
+          child_is_base_class, tmp_child_is_deref_of_parent, valobj,
+          language_flags);
+    }
+    child_is_deref_of_parent = true;
+    const char *parent_name = valobj ? valobj->GetName().GetCString() : nullptr;
+    if (parent_name) {
+      child_name.assign(1, '*');
+      child_name += parent_name;
+    }
+    if (idx == 0 && pointee_type.GetCompleteType()) {
+      auto size_or_err = pointee_type.GetByteSize(get_exe_scope());
+      if (!size_or_err)
+        return size_or_err.takeError();
+      child_byte_size = *size_or_err;
+      child_byte_offset = 0;
+      return pointee_type;
+    }
+  } break;
+  default:
+    return CompilerType();
+  }
+  return CompilerType();
+}
+
 bool TypeSystemFortran::DumpTypeValue(
     lldb::opaque_compiler_type_t type, Stream &s, lldb::Format format,
     const DataExtractor &data, lldb::offset_t data_offset,
@@ -471,6 +641,7 @@ bool TypeSystemFortran::DumpTypeValue(
   case FortranType::KIND_INTEGER:
   case FortranType::KIND_REAL:
   case FortranType::KIND_LOGICAL:
+  case FortranType::KIND_POINTER:
     format_data.SetData(data, 0, data.GetByteSize());
     format_data.SetAddressByteSize(data.GetAddressByteSize());
     format_data.SetByteOrder(m_byte_order);

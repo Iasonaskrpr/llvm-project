@@ -115,9 +115,7 @@ public:
   CompilerType GetFunctionArgumentAtIndex(lldb::opaque_compiler_type_t type,
                                           const size_t index) override;
 
-  bool IsFunctionPointerType(lldb::opaque_compiler_type_t type) override {
-    return false;
-  }
+  bool IsFunctionPointerType(lldb::opaque_compiler_type_t type) override;
 
   bool IsMemberFunctionPointerType(lldb::opaque_compiler_type_t type) override {
     return false;
@@ -146,9 +144,7 @@ public:
   }
 
   bool IsPointerType(lldb::opaque_compiler_type_t type,
-                     CompilerType *pointee_type) override {
-    return false;
-  }
+                     CompilerType *pointee_type) override;
 
   bool IsScalarType(lldb::opaque_compiler_type_t type) override { return true; }
 
@@ -171,7 +167,7 @@ public:
 
   // AST related queries
 
-  uint32_t GetPointerByteSize() override { return 0; }
+  uint32_t GetPointerByteSize() override { return GetAddressByteSize(); }
 
   CompilerType GetPointerDiffType(bool is_signed) override {
     return CompilerType();
@@ -255,17 +251,19 @@ public:
     return TypeMemberFunctionImpl();
   }
 
-  CompilerType GetPointeeType(lldb::opaque_compiler_type_t type) override {
-    return CompilerType();
-  }
+  CompilerType GetPointeeType(lldb::opaque_compiler_type_t type) override;
 
-  CompilerType GetPointerType(lldb::opaque_compiler_type_t type) override {
-    return CompilerType();
-  }
+  CompilerType GetPointerType(lldb::opaque_compiler_type_t type) override;
 
   void SetByteOrder(lldb::ByteOrder byte_order) { m_byte_order = byte_order; }
 
   lldb::ByteOrder GetByteOrder() { return m_byte_order; }
+
+  void SetAddressByteSize(uint32_t address_byte_size) {
+    m_address_byte_size = address_byte_size;
+  }
+
+  uint32_t GetAddressByteSize() const { return m_address_byte_size; }
 
   // Exploring the type
 
@@ -285,9 +283,7 @@ public:
   llvm::Expected<uint32_t>
   GetNumChildren(lldb::opaque_compiler_type_t type,
                  bool omit_empty_base_classes,
-                 const ExecutionContext *exe_ctx) override {
-    return 0;
-  }
+                 const ExecutionContext *exe_ctx) override;
 
   lldb::BasicType
   GetBasicTypeEnumeration(lldb::opaque_compiler_type_t type) override;
@@ -328,9 +324,7 @@ public:
   GetDereferencedType(lldb::opaque_compiler_type_t type,
                       ExecutionContext *exe_ctx, std::string &deref_name,
                       uint32_t &deref_byte_size, int32_t &deref_byte_offset,
-                      ValueObject *valobj, uint64_t &language_flags) override {
-    return CompilerType();
-  }
+                      ValueObject *valobj, uint64_t &language_flags) override;
 
   llvm::Expected<CompilerType> GetChildCompilerTypeAtIndex(
       lldb::opaque_compiler_type_t type, ExecutionContext *exe_ctx, size_t idx,
@@ -339,9 +333,7 @@ public:
       uint32_t &child_byte_size, int32_t &child_byte_offset,
       uint32_t &child_bitfield_bit_size, uint32_t &child_bitfield_bit_offset,
       bool &child_is_base_class, bool &child_is_deref_of_parent,
-      ValueObject *valobj, uint64_t &language_flags) override {
-    return CompilerType();
-  }
+      ValueObject *valobj, uint64_t &language_flags) override;
 
   // Lookup a child given a name. This function will match base class names and
   // member member names in "clang_type" only, not descendants.
@@ -406,7 +398,7 @@ public:
 
   bool IsPointerOrReferenceType(lldb::opaque_compiler_type_t type,
                                 CompilerType *pointee_type) override {
-    return false;
+    return IsPointerType(type, pointee_type);
   }
 
   unsigned GetTypeQualifiers(lldb::opaque_compiler_type_t type) override {
@@ -470,6 +462,7 @@ public:
 private:
   mutable llvm::FoldingSet<plugin::fortran::FortranType> m_basic_types;
   mutable llvm::FoldingSet<plugin::fortran::FortranFunction> m_functions;
+  mutable llvm::FoldingSet<plugin::fortran::FortranPointer> m_pointers;
   // We store all unique pointer types here so we can manage the lifecycle
   // of the types
   mutable llvm::SmallVector<std::unique_ptr<plugin::fortran::FortranType>>
@@ -477,6 +470,7 @@ private:
   std::unique_ptr<plugin::dwarf::DWARFASTParser> m_dwarf_ast_parser_up;
   /// Store byte order of the system so variables can be printed correctly
   lldb::ByteOrder m_byte_order;
+  uint32_t m_address_byte_size = 0;
 
   TypeSystemFortran(const TypeSystemFortran &) = delete;
   const TypeSystemFortran &operator=(const TypeSystemFortran &) = delete;

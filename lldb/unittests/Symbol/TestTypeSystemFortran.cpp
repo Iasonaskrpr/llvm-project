@@ -343,3 +343,109 @@ TEST_F(TestTypeSystemFortran, TestFortranFunctions) {
   EXPECT_EQ(void_func_type.GetFunctionArgumentCount(), 0);
   EXPECT_EQ(void_func_type.GetNumberOfFunctionArguments(), 0);
 }
+
+TEST_F(TestTypeSystemFortran, TestFortranPointers) {
+  llvm::SmallVector<CompilerType, 0> no_args;
+  llvm::SmallVector<llvm::StringRef, 0> no_args_names;
+  CompilerType void_func_type = m_ast->CreateFortranFunction(
+      ConstString("do_nothing"), no_args, no_args_names, CompilerType());
+  
+  CompilerType int32_type = m_ast->CreateBaseType(llvm::dwarf::DW_ATE_signed,
+                                                  32, ConstString("INTEGER"));    
+
+  // The type system relies on getting access to either module or target 
+  // to set address size, which in this instance doesn't happen so we need 
+  // to set the address  byte size ourselves.                                                
+  m_ast->SetAddressByteSize(8);
+  
+  CompilerType func_ptr = m_ast->GetPointerType(void_func_type.GetOpaqueQualType());
+  CompilerType int_ptr = m_ast->GetPointerType(int32_type.GetOpaqueQualType());
+
+  EXPECT_TRUE(int_ptr.IsPointerType());
+  EXPECT_TRUE(func_ptr.IsPointerType());
+  EXPECT_FALSE(int32_type.IsPointerType());
+
+  EXPECT_TRUE(func_ptr.IsFunctionPointerType());
+  EXPECT_FALSE(int_ptr.IsFunctionPointerType());
+
+  EXPECT_THAT_EXPECTED(int_ptr.GetNumChildren(false, nullptr), llvm::HasValue(1u));
+  EXPECT_THAT_EXPECTED(func_ptr.GetNumChildren(false, nullptr), llvm::HasValue(0u));
+  EXPECT_THAT_EXPECTED(int32_type.GetNumChildren(false, nullptr), llvm::HasValue(0u));
+
+  EXPECT_STREQ(int_ptr.GetTypeName().AsCString(""), "INTEGER *");
+  EXPECT_STREQ(func_ptr.GetTypeName().AsCString(""), "do_nothing() *");
+
+  auto func_ptr_size_or_err = func_ptr.GetByteSize(nullptr);
+  ASSERT_THAT_EXPECTED(func_ptr_size_or_err, llvm::Succeeded());
+  
+  auto int_ptr_size_or_err = int_ptr.GetByteSize(nullptr);
+  ASSERT_THAT_EXPECTED(int_ptr_size_or_err, llvm::Succeeded()); 
+
+  EXPECT_EQ(*func_ptr_size_or_err, 8U);
+  EXPECT_EQ(*int_ptr_size_or_err, 8U);
+
+  CompilerType int_pointee_type = int_ptr.GetPointeeType();
+  CompilerType func_pointee_type = func_ptr.GetPointeeType();  
+
+  EXPECT_TRUE(func_pointee_type.IsFunctionType());
+  EXPECT_FALSE(func_pointee_type.IsFunctionPointerType());
+
+  EXPECT_TRUE(int_pointee_type.IsInteger());
+  EXPECT_FALSE(int_pointee_type.IsPointerType());
+
+  std::string child_name;
+  uint32_t child_byte_size = 0;
+  int32_t child_byte_offset = 0;
+  uint32_t child_bitfield_bit_size = 0;
+  uint32_t child_bitfield_bit_offset = 0;
+  bool child_is_base_class = false;
+  bool child_is_deref_of_parent = false;
+  uint64_t language_flags = 0;
+
+  auto int_child_or_err = int_ptr.GetChildCompilerTypeAtIndex(
+      nullptr, 0, false, true, false, child_name, child_byte_size,
+      child_byte_offset, child_bitfield_bit_size, child_bitfield_bit_offset,
+      child_is_base_class, child_is_deref_of_parent, nullptr, language_flags);
+
+  ASSERT_THAT_EXPECTED(int_child_or_err, llvm::Succeeded());
+  EXPECT_EQ(*int_child_or_err, int32_type);
+  EXPECT_EQ(child_byte_size, 4U);
+  EXPECT_EQ(child_byte_offset, 0);
+  EXPECT_TRUE(child_is_deref_of_parent);
+  EXPECT_FALSE(child_is_base_class);
+
+  auto int_invalid_idx_err = int_ptr.GetChildCompilerTypeAtIndex(
+      nullptr, 1, false, true, false, child_name, child_byte_size,
+      child_byte_offset, child_bitfield_bit_size, child_bitfield_bit_offset,
+      child_is_base_class, child_is_deref_of_parent, nullptr, language_flags);
+  EXPECT_THAT_EXPECTED(int_invalid_idx_err, llvm::Failed());
+
+  auto func_child_err = func_ptr.GetChildCompilerTypeAtIndex(
+      nullptr, 0, false, true, false, child_name, child_byte_size,
+      child_byte_offset, child_bitfield_bit_size, child_bitfield_bit_offset,
+      child_is_base_class, child_is_deref_of_parent, nullptr, language_flags);
+  EXPECT_THAT_EXPECTED(func_child_err, llvm::Failed());
+
+  std::string deref_name;
+  uint32_t deref_byte_size = 0;
+  int32_t deref_byte_offset = 0;
+  language_flags = 0;
+
+  auto deref_int_or_err = int_ptr.GetDereferencedType(
+      nullptr, deref_name, deref_byte_size, deref_byte_offset, nullptr,
+      language_flags);
+  ASSERT_THAT_EXPECTED(deref_int_or_err, llvm::Succeeded());
+  EXPECT_EQ(*deref_int_or_err, int32_type);
+  EXPECT_EQ(deref_byte_size, 4U);
+  EXPECT_EQ(deref_byte_offset, 0);
+
+  auto deref_func_err = func_ptr.GetDereferencedType(
+      nullptr, deref_name, deref_byte_size, deref_byte_offset, nullptr,
+      language_flags);
+  EXPECT_THAT_EXPECTED(deref_func_err, llvm::Failed());
+
+  auto deref_non_ptr_err = int32_type.GetDereferencedType(
+      nullptr, deref_name, deref_byte_size, deref_byte_offset, nullptr,
+      language_flags);
+  EXPECT_THAT_EXPECTED(deref_non_ptr_err, llvm::Failed());
+}
