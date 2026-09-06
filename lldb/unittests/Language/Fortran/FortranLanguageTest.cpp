@@ -5,11 +5,6 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
-///
-/// \file
-/// This file tests the Fortran plugin features.
-///
-//===----------------------------------------------------------------------===//
 
 #include "Plugins/Language/Fortran/FortranLanguage.h"
 #include "TestingSupport/SubsystemRAII.h"

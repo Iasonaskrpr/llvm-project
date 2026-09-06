@@ -5,11 +5,6 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
-///
-/// \file
-/// This file implements the Fortran language plugin.
-///
-//===----------------------------------------------------------------------===//
 
 #include "llvm/ADT/StringRef.h"
 
@@ -38,9 +33,6 @@ StringRef FortranLanguage::GetPluginNameStatic() {
   return g_name;
 }
 
-//------------------------------------------------------------------
-// PluginInterface protocol
-//------------------------------------------------------------------
 StringRef FortranLanguage::GetPluginName() { return GetPluginNameStatic(); }
 
 uint32_t FortranLanguage::GetPluginVersion() { return 1; }
