@@ -140,7 +140,11 @@ ValueObjectConstResultImpl::CreateSyntheticArrayMember(size_t idx) {
     return nullptr;
   }
 
-  child_byte_offset += child_byte_size * idx;
+  int64_t array_byte_stride = compiler_type.GetArrayByteStride();
+  if (array_byte_stride > 0)
+    child_byte_offset += array_byte_stride * idx;
+  else
+    child_byte_offset += child_byte_size * idx;
 
   lldb::addr_t child_live_addr = LLDB_INVALID_ADDRESS;
   // Transfer the live address (with offset) to the child.  But if

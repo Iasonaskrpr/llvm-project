@@ -15,7 +15,13 @@
 
 #include "FortranLanguage.h"
 
+#include "DynamicArray.h"
+
 #include "lldb/Core/PluginManager.h"
+#include "lldb/DataFormatters/DataVisualization.h"
+#include "lldb/DataFormatters/FormattersHelpers.h"
+
+#include "Plugins/TypeSystem/Fortran/TypeSystemFortran.h"
 
 using namespace llvm;
 using namespace lldb;
@@ -53,10 +59,46 @@ Language *FortranLanguage::CreateInstance(LanguageType language) {
 }
 
 bool FortranLanguage::IsSourceFile(StringRef file_path) const {
-  const auto suffixes = {".f90", ".f", ".f95", ".f03", ".f08", ".f18"};
-  for (auto suffix : suffixes) {
+  const auto suffixes = {".f90", ".f"};
+
+  for (auto suffix : suffixes)
     if (file_path.ends_with_insensitive(suffix))
       return true;
-  }
+
   return false;
+}
+
+static lldb::SyntheticChildrenSP
+FortranDynamicArrayFinder(ValueObject &valobj,
+                          lldb::DynamicValueType use_dynamic) {
+  CompilerType type = valobj.GetCompilerType();
+
+  if (type.IsValid() && type.IsArrayType(nullptr, nullptr, nullptr)) {
+
+    SyntheticChildren::Flags flags;
+    flags.SetCascades(true)
+        .SetSkipPointers(false)
+        .SetSkipReferences(false)
+        .SetFrontEndWantsDereference();
+
+    return lldb::SyntheticChildrenSP(new CXXSyntheticChildren(
+        flags, "fortran array synthetic children",
+        lldb_private::formatters::FortranDynamicArraySyntheticFrontEndCreator));
+  }
+
+  // Return null if it's not an array, so LLDB can try other formatters
+  return nullptr;
+}
+
+HardcodedFormatters::HardcodedSyntheticFinder
+FortranLanguage::GetHardcodedSynthetics() {
+  HardcodedFormatters::HardcodedSyntheticFinder formatters;
+
+  formatters.push_back([](lldb_private::ValueObject &valobj,
+                          lldb::DynamicValueType use_dynamic,
+                          FormatManager &fmt_mgr) -> lldb::SyntheticChildrenSP {
+    return FortranDynamicArrayFinder(valobj, use_dynamic);
+  });
+
+  return formatters;
 }

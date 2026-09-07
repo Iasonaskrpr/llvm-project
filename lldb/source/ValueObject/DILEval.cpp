@@ -304,14 +304,27 @@ lldb::ValueObjectSP LookupGlobalIdentifier(llvm::StringRef name_ref,
   SymbolContext symbol_context =
       stack_frame.GetSymbolContext(lldb::eSymbolContextCompUnit);
   lldb::VariableListSP variable_list;
-  if (symbol_context.comp_unit)
+  lldb::IdentifierCaseType identifier_case = lldb::eCaseSensitive;
+
+  if (symbol_context.comp_unit) {
     variable_list = symbol_context.comp_unit->GetVariableList(true);
+    identifier_case = symbol_context.comp_unit->GetCasing();
+  }
 
   name_ref.consume_front("::");
+
+  std::string search_string;
+  if (identifier_case == lldb::eLowerCase)
+    search_string = name_ref.lower();
+  else if (identifier_case == lldb::eUpperCase)
+    search_string = name_ref.upper();
+  else
+    search_string = name_ref.str();
+
   lldb::ValueObjectSP value_sp;
   if (variable_list) {
     lldb::VariableSP var_sp =
-        DILFindVariable(ConstString(name_ref), *variable_list);
+        DILFindVariable(ConstString(search_string), *variable_list);
     if (var_sp)
       value_sp =
           stack_frame.GetValueObjectForFrameVariable(var_sp, use_dynamic);
@@ -323,12 +336,12 @@ lldb::ValueObjectSP LookupGlobalIdentifier(llvm::StringRef name_ref,
   // Check for match in modules global variables.
   VariableList modules_var_list;
   target_sp->GetImages().FindGlobalVariables(
-      ConstString(name_ref), std::numeric_limits<uint32_t>::max(),
+      ConstString(search_string), std::numeric_limits<uint32_t>::max(),
       modules_var_list);
 
   if (!modules_var_list.Empty()) {
     lldb::VariableSP var_sp =
-        DILFindVariable(ConstString(name_ref), modules_var_list);
+        DILFindVariable(ConstString(search_string), modules_var_list);
     if (var_sp)
       value_sp = ValueObjectVariable::Create(&stack_frame, var_sp);
 
@@ -360,10 +373,25 @@ lldb::ValueObjectSP LookupIdentifier(llvm::StringRef name_ref,
     lldb::VariableListSP variable_list(
         stack_frame.GetInScopeVariableList(false));
 
+    SymbolContext sc =
+        stack_frame.GetSymbolContext(lldb::eSymbolContextCompUnit);
+
+    lldb::IdentifierCaseType identifier_case = lldb::eCaseSensitive;
+    if (sc.comp_unit)
+      identifier_case = sc.comp_unit->GetCasing();
+
+    std::string search_string;
+    if (identifier_case == lldb::eLowerCase)
+      search_string = name_ref.lower();
+    else if (identifier_case == lldb::eUpperCase)
+      search_string = name_ref.upper();
+    else
+      search_string = name_ref.str();
+
     lldb::ValueObjectSP value_sp;
     if (variable_list) {
       lldb::VariableSP var_sp =
-          variable_list->FindVariable(ConstString(name_ref));
+          variable_list->FindVariable(ConstString(search_string));
       if (var_sp)
         value_sp =
             stack_frame.GetValueObjectForFrameVariable(var_sp, use_dynamic);
@@ -373,12 +401,12 @@ lldb::ValueObjectSP LookupIdentifier(llvm::StringRef name_ref,
       return value_sp;
 
     // Try looking for an instance variable (class member).
-    SymbolContext sc = stack_frame.GetSymbolContext(
-        lldb::eSymbolContextFunction | lldb::eSymbolContextBlock);
+    sc = stack_frame.GetSymbolContext(lldb::eSymbolContextFunction |
+                                      lldb::eSymbolContextBlock);
     llvm::StringRef instance_name = sc.GetInstanceName();
     value_sp = stack_frame.FindVariable(ConstString(instance_name));
     if (value_sp)
-      value_sp = value_sp->GetChildMemberWithName(name_ref);
+      value_sp = value_sp->GetChildMemberWithName(search_string);
 
     if (value_sp)
       return value_sp;
@@ -1465,6 +1493,23 @@ Interpreter::Visit(const MemberOfNode &node) {
       m_expr, errMsg, node.GetLocation(), node.GetFieldName().size());
 }
 
+static int64_t ExtractArrayLowerBound(lldb::ValueObjectSP base_valobj) {
+  if (!base_valobj)
+    return 0;
+
+  lldb::ValueObjectSP synthetic = base_valobj->GetSyntheticValue();
+  if (!synthetic)
+    synthetic = base_valobj;
+  synthetic->UpdateValueIfNeeded();
+  CompilerType explicit_type =
+      base_valobj->GetCompilerType().GetExplicitArrayType(base_valobj->GetID());
+
+  if (!explicit_type)
+    explicit_type = base_valobj->GetCompilerType();
+
+  return explicit_type.GetArrayLowerBound();
+}
+
 llvm::Expected<lldb::ValueObjectSP>
 Interpreter::Visit(const ArraySubscriptNode &node) {
   auto idx_or_err = EvaluateAndDereference(node.GetIndex());
@@ -1478,7 +1523,7 @@ Interpreter::Visit(const ArraySubscriptNode &node) {
   }
 
   StreamString var_expr_path_strm;
-  uint64_t child_idx = idx->GetValueAsUnsigned(0);
+  int64_t child_idx = idx->GetValueAsSigned(0);
   lldb::ValueObjectSP child_valobj_sp;
 
   auto base_or_err = Evaluate(node.GetBase());
@@ -1553,9 +1598,20 @@ Interpreter::Visit(const ArraySubscriptNode &node) {
                                                   node.GetLocation());
     }
   } else if (base_type.IsArrayType(nullptr, nullptr, &is_incomplete_array)) {
-    child_valobj_sp = base->GetChildAtIndex(child_idx);
-    if (!child_valobj_sp && (is_incomplete_array || m_use_synthetic))
-      child_valobj_sp = base->GetSyntheticArrayMember(child_idx, true);
+    // Some languages can have arrays with custom bounds, we normalize
+    // the index by which we get the children to start at 0.
+    int64_t lb = ExtractArrayLowerBound(base);
+    int64_t real_idx = child_idx - lb;
+    child_valobj_sp = base->GetChildAtIndex(real_idx);
+    if (!child_valobj_sp && (is_incomplete_array || m_use_synthetic)) {
+      child_valobj_sp = base->GetSyntheticArrayMember(real_idx, true);
+      // If arrays have custom bounds GetSyntheticArrayMember will assign
+      // the wrong name.
+      if (lb != 0 && child_valobj_sp) {
+        std::string child_name = llvm::formatv("[{0}]", child_idx);
+        child_valobj_sp->SetName(child_name);
+      }
+    }
     if (!child_valobj_sp) {
       std::string err_msg = llvm::formatv(
           "array index {0} is not valid for \"({1}) {2}\"", child_idx,

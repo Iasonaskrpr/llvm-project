@@ -10,19 +10,13 @@ lldb_tablegen(SymbolFileDWARFProperties.json -dump-json
   SOURCE SymbolFileDWARFProperties.td
   TARGET LLDBPluginSymbolFileDWARFPropertiesJsonGen)
 
-set(LLVM_OPTIONAL_SOURCES DWARFASTParserFortran.cpp)
-
-set(FORTRAN_DWARF_SOURCES "")
-if(LLDB_ENABLE_FORTRAN)
-  set(FORTRAN_DWARF_SOURCES DWARFASTParserFortran.cpp)
-endif()
-
 add_lldb_library(lldbPluginSymbolFileDWARF PLUGIN
   AppleDWARFIndex.cpp
   DebugNamesDWARFIndex.cpp
   DIERef.cpp
   DWARFASTParser.cpp
   DWARFASTParserClang.cpp
+  DWARFASTParserFortran.cpp
   DWARFAttribute.cpp
   DWARFBaseDIE.cpp
   DWARFCompileUnit.cpp
@@ -48,7 +42,6 @@ add_lldb_library(lldbPluginSymbolFileDWARF PLUGIN
   SymbolFileDWARFDebugMap.cpp
   SymbolFileWasm.cpp
   UniqueDWARFASTType.cpp
-  ${FORTRAN_DWARF_SOURCES}
 
   LINK_COMPONENTS
     DebugInfoDWARF
@@ -66,6 +59,8 @@ add_lldb_library(lldbPluginSymbolFileDWARF PLUGIN
     lldbPluginCPlusPlusLanguage
     lldbPluginExpressionParserClang
     lldbPluginTypeSystemClang
+    lldbPluginFortranLanguage 
+    lldbPluginTypeSystemFortran
   CLANG_LIBS
     clangAST
     clangBasic
@@ -74,10 +69,3 @@ add_lldb_library(lldbPluginSymbolFileDWARF PLUGIN
 add_dependencies(lldbPluginSymbolFileDWARF
   LLDBPluginSymbolFileDWARFPropertiesGen
   LLDBPluginSymbolFileDWARFPropertiesEnumGen)
-
-if(LLDB_ENABLE_FORTRAN)
-  target_link_libraries(lldbPluginSymbolFileDWARF PRIVATE 
-    lldbPluginFortranLanguage 
-    lldbPluginTypeSystemFortran
-  )
-endif()

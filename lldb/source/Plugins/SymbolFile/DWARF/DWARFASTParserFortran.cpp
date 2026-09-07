@@ -22,6 +22,8 @@
 #include "SymbolFileDWARFDebugMap.h"
 #include "UniqueDWARFASTType.h"
 
+#include "Plugins/TypeSystem/Fortran/FortranTypes.h"
+
 #include "lldb/Symbol/CompileUnit.h"
 #include "lldb/Utility/Log.h"
 #include "lldb/ValueObject/ValueObject.h"
@@ -30,6 +32,7 @@ using namespace lldb;
 using namespace lldb_private;
 using namespace lldb_private::plugin::dwarf;
 using namespace llvm::dwarf;
+using namespace lldb_private::plugin::fortran;
 
 DWARFASTParserFortran::DWARFASTParserFortran(
     lldb_private::TypeSystemFortran &m_ast)
@@ -37,6 +40,156 @@ DWARFASTParserFortran::DWARFASTParserFortran(
       m_ast(m_ast) {}
 
 DWARFASTParserFortran::~DWARFASTParserFortran() {}
+
+DWARFExpressionList GetDWARFExpression(const DWARFDIE &die,
+                                       const DWARFFormValue &form_value,
+                                       ModuleSP module) {
+  auto data = die.GetData();
+  uint32_t offset = form_value.BlockData() - data.GetDataStart();
+  uint32_t length = form_value.Unsigned();
+  return DWARFExpressionList(module, DataExtractor(data, offset, length),
+                             die.GetCU());
+}
+
+FortranArrayMetadata ParseArray(const DWARFDIE &parent_die,
+                                const ExecutionContext *exe_ctx) {
+  // We first process the array type attributes and then each individual
+  // subrange
+  FortranArrayMetadata array_info;
+  DWARFAttributes parent_attributes = parent_die.GetAttributes();
+  ModuleSP parent_module(parent_die.GetModule());
+  for (size_t idx = 0; idx < parent_attributes.Size(); idx++) {
+    const dw_attr_t attr = parent_attributes.AttributeAtIndex(idx);
+    DWARFFormValue form_value;
+    if (!parent_attributes.ExtractFormValueAtIndex(idx, form_value))
+      continue;
+    switch (attr) {
+    case DW_AT_data_location:
+      array_info.is_dynamic = true;
+      array_info.data_location_exp =
+          GetDWARFExpression(parent_die, form_value, parent_module);
+      break;
+    case DW_AT_allocated:
+      array_info.is_allocatable = true;
+      array_info.is_dynamic = true;
+      array_info.allocated_exp =
+          GetDWARFExpression(parent_die, form_value, parent_module);
+      break;
+    case DW_AT_rank:
+      array_info.rank_exp =
+          GetDWARFExpression(parent_die, form_value, parent_module);
+      array_info.is_assumed_rank = true;
+      break;
+    default:
+      break;
+    }
+  }
+  for (DWARFDIE die : parent_die.children()) {
+    const dw_tag_t tag = die.Tag();
+    ModuleSP module(die.GetModule());
+    // Both DW_TAG_subrange_type and DW_TAG_generic_subrange have the same
+    // fields, the handling is done by the synthetic children provider.
+    if (tag != DW_TAG_subrange_type && tag != DW_TAG_generic_subrange)
+      continue;
+    if (tag == DW_TAG_generic_subrange)
+      array_info.is_assumed_rank = true;
+    // If a subrange of an array is a star meaning we can't infer how many
+    // elements it has it is always the last dimension and is identified by not
+    // having a DW_AT_count attribute, if this at the end is true then it is a
+    // star and needs to be treated as such.
+    array_info.is_star = true;
+    DWARFAttributes attributes = die.GetAttributes();
+    if (attributes.Size() == 0)
+      continue;
+
+    DWARFValue num_elements;
+    DWARFValue byte_stride;
+    DWARFValue lower_bound;
+    DWARFValue upper_bound;
+    for (size_t i = 0; i < attributes.Size(); ++i) {
+      const dw_attr_t attr = attributes.AttributeAtIndex(i);
+      DWARFFormValue form_value;
+      if (!attributes.ExtractFormValueAtIndex(i, form_value))
+        continue;
+      switch (attr) {
+      case DW_AT_name:
+        break;
+
+      case DW_AT_count:
+        array_info.is_star = false;
+        if (DWARFDIE var_die = die.GetReferencedDIE(DW_AT_count)) {
+          if (var_die.Tag() == DW_TAG_variable) {
+            num_elements = var_die;
+            array_info.is_auto = true;
+          }
+        } else if (DWARFFormValue::IsBlockForm(form_value.Form())) {
+          num_elements = GetDWARFExpression(die, form_value, module);
+          array_info.is_dynamic = true;
+        } else
+          num_elements = form_value.Signed();
+        break;
+
+      case DW_AT_byte_stride:
+        if (DWARFDIE var_die = die.GetReferencedDIE(DW_AT_byte_stride)) {
+          if (var_die.Tag() == DW_TAG_variable) {
+            byte_stride = var_die;
+            array_info.is_auto = true;
+          }
+        } else if (DWARFFormValue::IsBlockForm(form_value.Form())) {
+          byte_stride = GetDWARFExpression(die, form_value, module);
+          array_info.is_dynamic = true;
+        } else
+          byte_stride = form_value.Signed();
+        break;
+
+      case DW_AT_lower_bound:
+        if (DWARFDIE var_die = die.GetReferencedDIE(DW_AT_lower_bound)) {
+          if (var_die.Tag() == DW_TAG_variable) {
+            lower_bound = var_die;
+            array_info.is_auto = true;
+          }
+        } else if (DWARFFormValue::IsBlockForm(form_value.Form())) {
+          lower_bound = GetDWARFExpression(die, form_value, module);
+          array_info.is_dynamic = true;
+        } else
+          lower_bound = form_value.Signed();
+
+        break;
+
+      case DW_AT_upper_bound:
+        array_info.is_star = false;
+        if (DWARFDIE var_die = die.GetReferencedDIE(DW_AT_upper_bound)) {
+          if (var_die.Tag() == DW_TAG_variable) {
+            upper_bound = var_die;
+            array_info.is_auto = true;
+          }
+        } else if (DWARFFormValue::IsBlockForm(form_value.Form())) {
+          array_info.is_dynamic = true;
+          upper_bound = GetDWARFExpression(die, form_value, module);
+        } else
+          upper_bound = form_value.Signed();
+        break;
+
+      default:
+        break;
+      }
+    }
+
+    if (std::holds_alternative<std::monostate>(num_elements)) {
+      if (std::holds_alternative<std::int64_t>(upper_bound) &&
+          std::holds_alternative<std::int64_t>(lower_bound))
+        num_elements = static_cast<int64_t>(std::get<int64_t>(upper_bound) -
+                                            std::get<int64_t>(lower_bound) + 1);
+    }
+    FortranDimension dimension;
+    dimension.element_count = num_elements;
+    dimension.lower_bound = lower_bound;
+    dimension.upper_bound = upper_bound;
+    dimension.byte_stride = byte_stride;
+    array_info.dimensions.push_back(dimension);
+  }
+  return array_info;
+}
 
 TypeSP DWARFASTParserFortran::UpdateSymbolContextScopeForType(
     const SymbolContext &sc, const DWARFDIE &die, TypeSP type_sp) {
@@ -163,6 +316,59 @@ lldb::TypeSP DWARFASTParserFortran::ParseTypeFromDWARF(
             dwarf->MakeType(die.GetID(), type_name, (bit_size + 7) / 8, nullptr,
                             LLDB_INVALID_UID, Type::eEncodingIsUID, decl,
                             compiler_type, Type::ResolveState::Full);
+      } break;
+      case DW_TAG_array_type: {
+        dwarf->GetDIEToType()[die.GetDIE()] = DIE_IS_BEING_PARSED;
+
+        DWARFDIE element_die = die.GetAttributeValueAsReferenceDIE(DW_AT_type);
+
+        Type *element_type = dwarf->ResolveTypeUID(element_die, true);
+        if (element_type) {
+
+          CompilerType array_element_type =
+              element_type->GetForwardCompilerType();
+          uint64_t total_array_size = 0;
+          uint64_t total_elements = 1;
+          if (array_element_type.GetCompleteType()) {
+            FortranArrayMetadata array_info = ParseArray(die, nullptr);
+
+            array_info.element_type = array_element_type;
+            // We need to calculate the total array size, if it is known
+            // at compile time
+            if (!array_info.is_dynamic && !array_info.is_star) {
+              for (size_t idx = 0; idx < array_info.dimensions.size(); idx++) {
+                if (std::holds_alternative<int64_t>(
+                        array_info.dimensions[idx].element_count))
+                  total_elements *= std::get<int64_t>(
+                      array_info.dimensions[idx].element_count);
+              }
+
+              // Total size is just total elements * the size of one element
+              auto byte_size_or_err = array_element_type.GetByteSize(nullptr);
+              if (byte_size_or_err)
+                total_array_size = total_elements * (*byte_size_or_err);
+              else
+                total_array_size = 0;
+            }
+
+            compiler_type = m_ast.CreateArrayType(array_info, total_array_size,
+                                                  total_elements);
+
+            type_sp = dwarf->MakeType(
+                die.GetID(), compiler_type.GetTypeName(), total_array_size,
+                nullptr, LLDB_INVALID_UID, Type::eEncodingIsUID, decl,
+                compiler_type, Type::ResolveState::Full);
+            type_sp->SetEncodingType(element_type);
+          } else {
+            dwarf->GetObjectFile()->GetModule()->LogMessage(
+                log,
+                "DWARFASTParserFortran::ParseTypeFromDWARF (die = 0x%8.8x) %s "
+                "name "
+                "= '%s'), incomplete type array element not supported, yet!.",
+                die.GetOffset(), plugin::dwarf::DW_TAG_value_to_name(die.Tag()),
+                die.GetName());
+          }
+        }
       } break;
       case DW_TAG_subprogram:
       case DW_TAG_subroutine_type: {

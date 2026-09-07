@@ -796,12 +796,15 @@ lldb::CompUnitSP SymbolFileDWARF::ParseCompileUnit(DWARFCompileUnit &dwarf_cu) {
       if (module_sp) {
         auto initialize_cu = [&](SupportFileNSP support_file_nsp,
                                  LanguageType cu_language,
+                                 IdentifierCaseType cu_casing,
                                  SupportFileList &&support_files = {}) {
           BuildCuTranslationTable();
           cu_sp = std::make_shared<CompileUnit>(
               module_sp, &dwarf_cu, support_file_nsp,
               *GetDWARFUnitIndex(dwarf_cu.GetID()), cu_language,
               eLazyBoolCalculate, std::move(support_files));
+
+          cu_sp->SetCasing(cu_casing);
 
           dwarf_cu.SetLLDBCompUnit(cu_sp.get());
 
@@ -833,7 +836,8 @@ lldb::CompUnitSP SymbolFileDWARF::ParseCompileUnit(DWARFCompileUnit &dwarf_cu) {
           if (support_files.GetSize() == 0)
             return false;
           initialize_cu(support_files.GetSupportFileAtIndex(0),
-                        eLanguageTypeUnknown, std::move(support_files));
+                        eLanguageTypeUnknown, dwarf_cu.GetIdentifierCase(),
+                        std::move(support_files));
           return true;
         };
 
@@ -852,7 +856,7 @@ lldb::CompUnitSP SymbolFileDWARF::ParseCompileUnit(DWARFCompileUnit &dwarf_cu) {
             MakeAbsoluteAndRemap(cu_file_spec, dwarf_cu, module_sp);
 
             initialize_cu(std::make_shared<SupportFile>(cu_file_spec),
-                          cu_language);
+                          cu_language, dwarf_cu.GetIdentifierCase());
           }
         }
       }

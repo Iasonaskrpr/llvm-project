@@ -45,6 +45,7 @@ public:
     KIND_COMPLEX,
     KIND_FUNCTION,
     KIND_POINTER,
+    KIND_ARRAY,
     KIND_UNKNOWN
   };
 
@@ -126,6 +127,264 @@ public:
 
 private:
   lldb_private::CompilerType m_pointee_type;
+};
+
+using DWARFValue =
+    std::variant<std::monostate, // Represents "Default" or "Not Present"
+                 int64_t,
+                 // Dynamic expression (e.g., variable/runtime stride)
+                 DWARFExpressionList, dwarf::DWARFDIE>;
+
+struct FortranDimension {
+  DWARFValue lower_bound;
+  DWARFValue upper_bound;
+  DWARFValue element_count;
+  DWARFValue byte_stride;
+};
+
+struct FortranArrayMetadata {
+  CompilerType element_type;
+  llvm::SmallVector<FortranDimension, 4> dimensions;
+  bool is_allocatable = false;
+  bool is_dynamic = false;
+  bool is_star = false;
+  bool is_auto = false;
+  bool is_assumed_rank = false;
+  bool is_scalar = false;
+  DWARFExpressionList allocated_exp;
+  DWARFExpressionList data_location_exp;
+  DWARFExpressionList rank_exp;
+};
+
+class ArrayBound {
+public:
+  enum class Category { Explicit, Star, Colon };
+  ArrayBound() = default;
+  ArrayBound(Category category) : m_category{category} {}
+  ArrayBound(Category category, int64_t bound)
+      : m_category{category}, m_bound(bound), m_is_bound_known(true) {}
+
+  bool IsExplicit() const { return m_category == Category::Explicit; }
+
+  bool IsStar() const { return m_category == Category::Star; }
+
+  bool IsColon() const { return m_category == Category::Colon; }
+
+  void SetCategory(Category c) { m_category = c; }
+
+  bool IsBoundKnown() const { return m_is_bound_known; }
+
+  int64_t GetBound() const {
+    assert(m_is_bound_known && "Can't get the bound if it is not explicit");
+    return m_bound;
+  }
+
+  void SetBound(int64_t bound) {
+    m_is_bound_known = true;
+    m_bound = bound;
+  }
+
+  void Profile(llvm::FoldingSetNodeID &id) const {
+    Profile(id, m_category, m_is_bound_known, m_bound);
+  }
+
+  static void Profile(llvm::FoldingSetNodeID &id, Category category,
+                      bool is_bound_known, int64_t bound) {
+    id.AddInteger(static_cast<uint32_t>(category));
+
+    id.AddBoolean(is_bound_known);
+
+    if (is_bound_known)
+      id.AddInteger(bound);
+  }
+
+private:
+  Category m_category{Category::Explicit};
+  int64_t m_bound;
+  bool m_is_bound_known = false;
+};
+
+class ArrayShape {
+public:
+  ArrayShape() = default;
+  ArrayShape(ArrayBound lb, ArrayBound ub, uint64_t byte_stride)
+      : m_lb(lb), m_ub(ub), m_byte_stride(byte_stride) {}
+
+  const ArrayBound &GetLowerBound() const { return m_lb; }
+  const ArrayBound &GetUpperBound() const { return m_ub; }
+  int64_t GetByteStride() const { return m_byte_stride; }
+  int64_t GetElementCount() const { return m_element_count; }
+
+  const DWARFExpressionList &GetElementCountExpression() const {
+    return m_element_count_exp;
+  }
+  const DWARFExpressionList &GetUpperBoundExpression() const {
+    return m_upper_bound_exp;
+  }
+  const DWARFExpressionList &GetLowerBoundExpression() const {
+    return m_lower_bound_exp;
+  }
+  const DWARFExpressionList &GetByteStrideExpression() const {
+    return m_byte_stride_exp;
+  }
+
+  const dwarf::DWARFDIE &GetElementCountDIE() const {
+    return m_element_count_var;
+  }
+  const dwarf::DWARFDIE &GetUpperBoundDIE() const { return m_upper_bound_var; }
+  const dwarf::DWARFDIE &GetLowerBoundDIE() const { return m_lower_bound_var; }
+  const dwarf::DWARFDIE &GetByteStrideDIE() const { return m_byte_stride_var; }
+
+  void SetLowerBound(const ArrayBound &lb) { m_lb = lb; }
+  void SetUpperBound(const ArrayBound &ub) { m_ub = ub; }
+  void SetByteStride(int64_t byte_stride) { m_byte_stride = byte_stride; }
+  void SetElementCount(int64_t element_count) {
+    m_element_count = element_count;
+  }
+
+  void SetElementCountExpression(DWARFExpressionList expr) {
+    m_element_count_exp = std::move(expr);
+  }
+  void SetUpperBoundExpression(DWARFExpressionList expr) {
+    m_upper_bound_exp = std::move(expr);
+  }
+  void SetLowerBoundExpression(DWARFExpressionList expr) {
+    m_lower_bound_exp = std::move(expr);
+  }
+  void SetByteStrideExpression(DWARFExpressionList expr) {
+    m_byte_stride_exp = std::move(expr);
+  }
+
+  void SetUpperBoundDIE(dwarf::DWARFDIE die) {
+    m_upper_bound_var = std::move(die);
+  }
+  void SetLowerBoundDIE(dwarf::DWARFDIE die) {
+    m_lower_bound_var = std::move(die);
+  }
+  void SetByteStrideDIE(dwarf::DWARFDIE die) {
+    m_byte_stride_var = std::move(die);
+  }
+  void SetElementCountDIE(dwarf::DWARFDIE die) {
+    m_element_count_var = std::move(die);
+  }
+
+  void Profile(llvm::FoldingSetNodeID &id) const {
+    Profile(id, m_lb, m_ub, m_byte_stride, m_element_count, m_element_count_exp,
+            m_upper_bound_exp, m_lower_bound_exp, m_byte_stride_exp,
+            m_element_count_var, m_upper_bound_var, m_lower_bound_var,
+            m_byte_stride_var);
+  }
+
+  static void Profile(llvm::FoldingSetNodeID &id, const ArrayBound &lb,
+                      const ArrayBound &ub, const uint64_t byte_stride,
+                      const uint64_t element_count,
+
+                      const DWARFExpressionList &element_count_exp,
+                      const DWARFExpressionList &upper_bound_exp,
+                      const DWARFExpressionList &lower_bound_exp,
+                      const DWARFExpressionList &byte_stride_exp,
+
+                      const dwarf::DWARFDIE element_count_var,
+                      const dwarf::DWARFDIE upper_bound_var,
+                      const dwarf::DWARFDIE lower_bound_var,
+                      const dwarf::DWARFDIE byte_stride_var) {
+    lb.Profile(id);
+    ub.Profile(id);
+    id.AddInteger(byte_stride);
+    id.AddInteger(element_count);
+    id.AddBoolean(element_count_exp.IsValid());
+    id.AddBoolean(upper_bound_exp.IsValid());
+    id.AddBoolean(lower_bound_exp.IsValid());
+    id.AddBoolean(byte_stride_exp.IsValid());
+    id.AddBoolean(element_count_var.IsValid());
+    id.AddBoolean(upper_bound_var.IsValid());
+    id.AddBoolean(lower_bound_var.IsValid());
+    id.AddBoolean(byte_stride_var.IsValid());
+  }
+
+private:
+  ArrayBound m_lb;
+  ArrayBound m_ub;
+  int64_t m_byte_stride;
+  int64_t m_element_count;
+
+  DWARFExpressionList m_element_count_exp;
+  DWARFExpressionList m_upper_bound_exp;
+  DWARFExpressionList m_lower_bound_exp;
+  DWARFExpressionList m_byte_stride_exp;
+
+  dwarf::DWARFDIE m_element_count_var;
+  dwarf::DWARFDIE m_upper_bound_var;
+  dwarf::DWARFDIE m_lower_bound_var;
+  dwarf::DWARFDIE m_byte_stride_var;
+};
+
+class FortranArray : public FortranType {
+public:
+  FortranArray(CompilerType element_type,
+               const llvm::SmallVectorImpl<ArrayShape> &dimensions,
+               ConstString array_type_name, uint64_t total_array_size,
+               bool is_allocatable, bool is_dynamic, bool is_star, bool is_auto,
+               bool is_assumed_rank, uint64_t total_elements,
+               DWARFExpressionList allocated_exp,
+               DWARFExpressionList data_location_exp,
+               DWARFExpressionList rank_exp);
+
+  CompilerType GetElementType() const { return m_element_type; }
+  uint64_t GetTotalElements() const { return m_total_elements; }
+  bool IsAllocatable() const { return m_is_allocatable; }
+  bool IsDynamic() const { return m_is_dynamic; }
+  bool IsScalar() const { return m_is_scalar; }
+  void SetScalar(bool is_scalar) { m_is_scalar = is_scalar; }
+  uint64_t GetElementByteSize() const;
+
+  size_t GetRank() const { return m_dimensions.size(); }
+  llvm::ArrayRef<ArrayShape> GetDimensions() const { return m_dimensions; }
+  bool IsStar() const { return m_is_star; }
+  bool IsAssumedRank() const { return m_is_assumed_rank; }
+
+  DWARFExpressionList GetAllocatedExpression() const { return m_allocated_exp; }
+  DWARFExpressionList GetDataLocationExpression() const {
+    return m_data_location_exp;
+  }
+  DWARFExpressionList GetRankExpression() const { return m_rank_exp; }
+  void Profile(llvm::FoldingSetNodeID &id) const {
+    Profile(id, m_element_type, m_dimensions, m_is_allocatable, m_is_dynamic,
+            m_allocated_exp, m_data_location_exp);
+  }
+
+  static void Profile(llvm::FoldingSetNodeID &id, CompilerType element_type,
+                      llvm::ArrayRef<ArrayShape> dimensions,
+                      bool is_allocatable, bool is_dynamic,
+                      const DWARFExpressionList &allocated_exp,
+                      const DWARFExpressionList &data_location_exp) {
+    id.AddPointer(element_type.GetOpaqueQualType());
+    id.AddBoolean(is_allocatable);
+    id.AddBoolean(is_dynamic);
+    id.AddBoolean(allocated_exp.IsValid());
+    id.AddBoolean(data_location_exp.IsValid());
+    id.AddInteger(dimensions.size());
+
+    for (const auto &shape : dimensions)
+      shape.Profile(id);
+  }
+  bool IsAuto() { return m_is_auto; }
+
+private:
+  CompilerType m_element_type;
+  llvm::SmallVector<ArrayShape, 2> m_dimensions;
+  bool m_is_allocatable;
+  // To know if the array is fully explicit without looping through the shapes
+  // every time.
+  bool m_is_dynamic;
+  bool m_is_star;
+  bool m_is_auto;
+  bool m_is_assumed_rank;
+  bool m_is_scalar = false;
+  uint64_t m_total_elements;
+  DWARFExpressionList m_allocated_exp;
+  DWARFExpressionList m_data_location_exp;
+  DWARFExpressionList m_rank_exp;
 };
 
 } // namespace fortran

@@ -38,6 +38,17 @@ bool NameToDIE::Find(
   for (const auto &entry : m_map.equal_range(name))
     if (callback(entry.value) == IterationAction::Stop)
       return false;
+
+  if (!NameCaseInsensitive)
+    return true;
+
+  for (const auto &entry : m_map) {
+    if (ConstString::Equals(ConstString(entry.cstring.GetCString()), name,
+                            false))
+      if (callback(entry.value) == IterationAction::Stop)
+        return false;
+  }
+
   return true;
 }
 

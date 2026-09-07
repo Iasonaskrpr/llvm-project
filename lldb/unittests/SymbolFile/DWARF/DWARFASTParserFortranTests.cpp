@@ -31,11 +31,15 @@ public:
 };
 
 class DWARFASTParserFortranTests : public testing::Test {
+  static inline std::once_flag g_fortran_plugin_flag;
+
   void SetUp() override {
-    std::call_once(TestUtilities::g_debugger_initialize_flag, []() {
-      Debugger::Initialize(nullptr);
-      TypeSystemFortran::Initialize();
-    });
+    std::call_once(TestUtilities::g_debugger_initialize_flag,
+                   []() { Debugger::Initialize(nullptr); });
+
+    // Fortran plugin must be initialized separately from core LLDB
+    std::call_once(g_fortran_plugin_flag,
+                   []() { TypeSystemFortran::Initialize(); });
   }
 };
 
@@ -74,8 +78,8 @@ public:
     SymbolFile *symfile = module_sp->GetSymbolFile();
     assert(symfile);
 
-    TypeSystemSP ts_sp = llvm::cantFail(symfile->GetTypeSystemForLanguage(
-        lldb::LanguageType::eLanguageTypeFortran90));
+    TypeSystemSP ts_sp = llvm::cantFail(
+        symfile->GetTypeSystemForLanguage(lldb::eLanguageTypeFortran90));
 
     assert(llvm::isa_and_nonnull<TypeSystemFortran>(ts_sp.get()));
 
