@@ -386,17 +386,12 @@ CompilerType TypeSystemFortran::CreateBaseType(uint32_t dwarf_encoding,
 CompilerType TypeSystemFortran::GetOrCreateFortranBaseType(int kind,
                                                            uint64_t bitsize,
                                                            ConstString name) {
-  llvm::FoldingSetNodeID id;
-  FortranType::Profile(id, kind, bitsize);
-  void *insert_pos = nullptr;
-  FortranType *fortran_type = m_basic_types.FindNodeOrInsertPos(id, insert_pos);
-  if (fortran_type)
-    return CompilerType(weak_from_this(), (void *)fortran_type);
   auto new_type_up = std::make_unique<FortranType>(kind, bitsize, name);
-  fortran_type = new_type_up.get();
 
-  m_types.push_back(std::move(new_type_up));
-  m_basic_types.InsertNode(fortran_type, insert_pos);
+  FortranType *fortran_type = m_basic_types.getOrInsert(new_type_up.get());
+  if (fortran_type == new_type_up.get())
+    m_types.push_back(std::move(new_type_up));
+
   return CompilerType(weak_from_this(), (void *)fortran_type);
 }
 
@@ -404,19 +399,13 @@ CompilerType TypeSystemFortran::CreateFortranFunction(
     ConstString name, const SmallVectorImpl<CompilerType> &parameters,
     const SmallVectorImpl<StringRef> &parameter_names,
     CompilerType return_type) {
-  llvm::FoldingSetNodeID id;
-  FortranFunction::Profile(id, name, parameters, return_type);
-  void *insert_pos = nullptr;
-  FortranFunction *fortran_function =
-      m_functions.FindNodeOrInsertPos(id, insert_pos);
-  if (fortran_function)
-    return CompilerType(weak_from_this(), (void *)fortran_function);
   auto new_type_up = std::make_unique<FortranFunction>(
       name, parameters, parameter_names, return_type);
-  fortran_function = new_type_up.get();
+  FortranFunction *fortran_function =
+      m_functions.getOrInsert(new_type_up.get());
 
-  m_functions.InsertNode(fortran_function, insert_pos);
-  m_types.push_back(std::move(new_type_up));
+  if (fortran_function == new_type_up.get())
+    m_types.push_back(std::move(new_type_up));
 
   return CompilerType(weak_from_this(), (void *)fortran_function);
 }
@@ -536,15 +525,6 @@ CompilerType TypeSystemFortran::CreateArrayType(FortranArrayMetadata array_info,
 
     array_shapes.push_back(shape);
   }
-  llvm::FoldingSetNodeID id;
-  FortranArray::Profile(id, array_info.element_type, array_shapes,
-                        array_info.is_allocatable, array_info.is_dynamic,
-                        array_info.allocated_exp, array_info.data_location_exp);
-  void *insert_pos = nullptr;
-  FortranArray *array_type = m_arrays.FindNodeOrInsertPos(id, insert_pos);
-  if (array_type)
-    return CompilerType(weak_from_this(), (void *)array_type);
-
   ConstString array_type_name = CreateArrayTypeName(
       array_info.element_type, array_shapes, array_info.is_allocatable,
       array_info.is_star, array_info.is_assumed_rank);
@@ -556,9 +536,10 @@ CompilerType TypeSystemFortran::CreateArrayType(FortranArrayMetadata array_info,
       array_info.allocated_exp, array_info.data_location_exp,
       array_info.rank_exp);
 
-  array_type = new_type_up.get();
-  m_arrays.InsertNode(array_type, insert_pos);
-  m_types.push_back(std::move(new_type_up));
+  FortranArray *array_type = m_arrays.getOrInsert(new_type_up.get());
+
+  if (array_type == new_type_up.get())
+    m_types.push_back(std::move(new_type_up));
 
   return CompilerType(weak_from_this(), (void *)array_type);
 }
@@ -624,21 +605,17 @@ TypeSystemFortran::GetPointerType(lldb::opaque_compiler_type_t type) {
   if (!type)
     return CompilerType();
 
-  llvm::FoldingSetNodeID id;
   CompilerType pointee_type(weak_from_this(), type);
-  FortranPointer::Profile(id, pointee_type);
-  void *insert_pos = nullptr;
-  FortranPointer *fortran_type = m_pointers.FindNodeOrInsertPos(id, insert_pos);
-  if (fortran_type)
-    return CompilerType(weak_from_this(), (void *)fortran_type);
-
   uint32_t address_bitsize = GetAddressByteSize() * 8;
+
   auto new_type_up = std::make_unique<FortranPointer>(
       address_bitsize, pointee_type.GetTypeName(), pointee_type);
-  fortran_type = new_type_up.get();
 
-  m_types.push_back(std::move(new_type_up));
-  m_pointers.InsertNode(fortran_type, insert_pos);
+  FortranPointer *fortran_type = m_pointers.getOrInsert(new_type_up.get());
+
+  if (fortran_type == new_type_up.get())
+    m_types.push_back(std::move(new_type_up));
+
   return CompilerType(weak_from_this(), (void *)fortran_type);
 }
 
@@ -906,26 +883,21 @@ llvm::Expected<CompilerType> TypeSystemFortran::GetChildCompilerTypeAtIndex(
         child_byte_size =
             new_total_elements * fortran_type->GetElementByteSize();
       }
-      llvm::FoldingSetNodeID id;
-      FortranArray::Profile(id, fortran_type->GetElementType(), new_dimensions,
-                            false, false, DWARFExpressionList(),
-                            DWARFExpressionList());
-      void *insert_pos = nullptr;
-      FortranArray *array_type = m_arrays.FindNodeOrInsertPos(id, insert_pos);
-      if (array_type)
-        return CompilerType(weak_from_this(), (void *)array_type);
-
       ConstString type_name = CreateArrayTypeName(
           fortran_type->GetElementType(), new_dimensions, is_allocatable,
           is_star, fortran_type->IsAssumedRank());
+
       auto new_type_up = std::make_unique<FortranArray>(
           fortran_type->GetElementType(), new_dimensions, type_name,
           child_byte_size, false, false, fortran_type->IsStar(),
           fortran_type->IsAuto(), false, new_total_elements,
           DWARFExpressionList(), DWARFExpressionList(), DWARFExpressionList());
-      array_type = new_type_up.get();
-      m_arrays.InsertNode(array_type, insert_pos);
-      m_types.push_back(std::move(new_type_up));
+
+      FortranArray *array_type = m_arrays.getOrInsert(new_type_up.get());
+
+      if (array_type == new_type_up.get())
+        m_types.push_back(std::move(new_type_up));
+
       return CompilerType(weak_from_this(), (void *)array_type);
     } else {
       child_byte_offset = idx * old_dimensions.front().GetByteStride();
