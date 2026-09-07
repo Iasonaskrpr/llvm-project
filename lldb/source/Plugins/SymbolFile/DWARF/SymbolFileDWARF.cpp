@@ -2346,6 +2346,13 @@ void SymbolFileDWARF::FindGlobalVariables(
   bool name_is_mangled = Mangled::GetManglingScheme(name.GetStringRef()) !=
                          Mangled::eManglingSchemeNone;
 
+  // Technically not a mangled name, but a support variable emitted by clang.
+  // Regardless, we need an exact lookup
+  //
+  // FIXME: Replace this with a constant shared between Clang and LLDB
+  if (name == "__clang_vtable")
+    name_is_mangled = true;
+
   if (!CPlusPlusLanguage::ExtractContextAndIdentifier(name.GetStringRef(),
                                                       context, basename))
     basename = name.GetStringRef();
@@ -4743,4 +4750,13 @@ DWOStats SymbolFileDWARF::GetDwoStats() {
   }
 
   return stats;
+}
+
+lldb::TypeSP SymbolFileDWARF::GetTypeEnclosingVariableUID(lldb::user_id_t uid) {
+  DWARFDIE die = GetDIE(uid);
+
+  if (die.Tag() != DW_TAG_variable)
+    return nullptr;
+
+  return GetTypeForDIE(die.GetParentDeclContextDIE());
 }
