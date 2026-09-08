@@ -792,8 +792,10 @@ llvm::Expected<CompilerType> TypeSystemFortran::GetChildCompilerTypeAtIndex(
     return num_children_or_err.takeError();
 
   const bool idx_is_valid = idx < *num_children_or_err;
+  
   if (!idx_is_valid)
-    return llvm::createStringError("invalid index");
+    return CompilerType();
+
   auto get_exe_scope = [&exe_ctx]() {
     return exe_ctx ? exe_ctx->GetBestExecutionContextScope() : nullptr;
   };

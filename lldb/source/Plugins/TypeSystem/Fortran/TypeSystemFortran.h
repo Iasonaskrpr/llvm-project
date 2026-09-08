@@ -475,7 +475,7 @@ public:
   }
 
   CompilerType GetNonReferenceType(lldb::opaque_compiler_type_t type) override {
-    return CompilerType();
+    return CompilerType(weak_from_this(), type);
   }
 
   bool IsReferenceType(lldb::opaque_compiler_type_t type,
