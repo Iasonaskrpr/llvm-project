@@ -21,7 +21,7 @@ class FortranTestReal(TestBase):
 
         float_four = frame.FindVariable("float_four")
         self.assertSuccess(float_four.GetError(), "Failed to fetch float_four")
-        self.assertEqual(float_four.GetTypeName(), "REAL")
+        self.assertEqual(float_four.GetTypeName(), "REAL(KIND=4)")
         self.assertEqual(float_four.GetByteSize(), 4)
         self.assertTrue(
             float_four.GetValue().startswith("3.14"), "float_four value is correct"

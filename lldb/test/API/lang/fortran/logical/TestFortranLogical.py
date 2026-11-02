@@ -33,7 +33,7 @@ class FortranTestLogicals(TestBase):
 
         bool_four = frame.FindVariable("bool_four")
         self.assertSuccess(bool_four.GetError(), "Failed to fetch bool_four")
-        self.assertEqual(bool_four.GetTypeName(), "LOGICAL")
+        self.assertEqual(bool_four.GetTypeName(), "LOGICAL(KIND=4)")
         self.assertEqual(bool_four.GetByteSize(), 4)
         self.assertEqual(bool_four.GetValue(), "true")
 

@@ -21,7 +21,7 @@ class FortranTestComplex(TestBase):
 
         complex_four = frame.FindVariable("complex_four")
         self.assertSuccess(complex_four.GetError(), "Failed to fetch complex_four.")
-        self.assertEqual(complex_four.GetTypeName(), "COMPLEX")
+        self.assertEqual(complex_four.GetTypeName(), "COMPLEX(KIND=4)")
         self.assertEqual(complex_four.GetByteSize(), 8)
         self.assertEqual(complex_four.GetValue(), "(2, 3)")
 

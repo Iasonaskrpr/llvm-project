@@ -33,7 +33,7 @@ class FortranTestIntegers(TestBase):
 
         normal_int = frame.FindVariable("normal_int")
         self.assertSuccess(normal_int.GetError(), "Failed to fetch normal_int")
-        self.assertEqual(normal_int.GetTypeName(), "INTEGER")
+        self.assertEqual(normal_int.GetTypeName(), "INTEGER(KIND=4)")
         self.assertEqual(normal_int.GetByteSize(), 4)
         self.assertEqual(normal_int.GetValueAsSigned(), 2147483647)
 

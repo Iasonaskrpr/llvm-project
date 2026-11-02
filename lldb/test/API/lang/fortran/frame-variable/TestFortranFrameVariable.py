@@ -17,14 +17,14 @@ class FortranTestFrameVariable(TestBase):
             self, "! Breakpoint here", self.main_source_file
         )
 
-        self.expect("frame variable num_int", substrs=["(INTEGER) num_int = 152"])
+        self.expect("frame variable num_int", substrs=["(INTEGER(KIND=4)) num_int = 152"])
 
-        self.expect("frame variable num_real", substrs=["(REAL) num_real = 2.718"])
+        self.expect("frame variable num_real", substrs=["(REAL(KIND=4)) num_real = 2.718"])
 
         self.expect(
-            "frame variable num_logical", substrs=["(LOGICAL) num_logical = true"]
+            "frame variable num_logical", substrs=["(LOGICAL(KIND=4)) num_logical = true"]
         )
 
         self.expect(
-            "frame variable num_complex", substrs=["(COMPLEX) num_complex = (1.3, 2.6)"]
+            "frame variable num_complex", substrs=["(COMPLEX(KIND=4)) num_complex = (1.3, 2.6)"]
         )
