@@ -5,9 +5,15 @@
 
 ; Test that DW_AT_identifier_case is emitted for case-insensitive languages
 ; (Fortran) and omitted for case-sensitive languages (C++).
+; For Fortran DW_ID_down_case is emitted. For Cobol and Pascal
+; DW_ID_case_insensitive is emitted.
 
 ; Fortran via old-style language field
 ; CHECK:      DW_AT_language (DW_LANG_Fortran90)
+; CHECK-NEXT: DW_AT_identifier_case (DW_ID_down_case)
+
+; Cobol via old-style language field
+; CHECK:      DW_AT_language (DW_LANG_Cobol74)
 ; CHECK-NEXT: DW_AT_identifier_case (DW_ID_case_insensitive)
 
 ; C++ via old-style language field — no DW_AT_identifier_case emitted
@@ -15,6 +21,10 @@
 
 ; Fortran via sourceLanguageName
 ; CHECK:      DW_AT_language_name (DW_LNAME_Fortran)
+; CHECK:      DW_AT_identifier_case (DW_ID_down_case)
+
+; Fortran via sourceLanguageName
+; CHECK:      DW_AT_language_name (DW_LNAME_Cobol)
 ; CHECK:      DW_AT_identifier_case (DW_ID_case_insensitive)
 
 ; C++ via sourceLanguageName — no DW_AT_identifier_case emitted
@@ -22,7 +32,7 @@
 
 @x = global i32 0, align 4, !dbg !0
 
-!llvm.dbg.cu = !{!2, !8, !9, !10}
+!llvm.dbg.cu = !{!2, !11, !8, !9, !12, !10}
 !llvm.module.flags = !{!6, !7}
 
 !0 = !DIGlobalVariableExpression(var: !1, expr: !DIExpression())
@@ -36,3 +46,5 @@
 !8 = distinct !DICompileUnit(language: DW_LANG_C_plus_plus, file: !3, producer: "handwritten", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug, globals: !4, splitDebugInlining: false, nameTableKind: Apple, sysroot: "/")
 !9 = distinct !DICompileUnit(sourceLanguageName: DW_LNAME_Fortran, sourceLanguageVersion: 1990, file: !3, producer: "handwritten", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug, globals: !4, splitDebugInlining: false, nameTableKind: Apple, sysroot: "/")
 !10 = distinct !DICompileUnit(sourceLanguageName: DW_LNAME_C_plus_plus, sourceLanguageVersion: 201100, file: !3, producer: "handwritten", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug, globals: !4, splitDebugInlining: false, nameTableKind: Apple, sysroot: "/")
+!11 = distinct !DICompileUnit(language: DW_LANG_Cobol74, file: !3, producer: "handwritten", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug, globals: !4, splitDebugInlining: false, nameTableKind: Apple, sysroot: "/")
+!12 = distinct !DICompileUnit(sourceLanguageName: DW_LNAME_Cobol, sourceLanguageVersion: 1974, file: !3, producer: "handwritten", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug, globals: !4, splitDebugInlining: false, nameTableKind: Apple, sysroot: "/")
